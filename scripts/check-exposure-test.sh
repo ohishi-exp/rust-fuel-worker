@@ -164,8 +164,15 @@ mutate 1 "(j) services を消す" 'del cfg["services"]' "services の AUTH_MCRED
 mutate 1 "(j) AUTH_MCRED の entrypoint を消す" "del ${mcred}[\"entrypoint\"]" "services の AUTH_MCRED"
 mutate 1 "(j) AUTH_MCRED の entrypoint を変える" "${mcred}[\"entrypoint\"] = \"InternalEntrypoint\"" "services の AUTH_MCRED"
 mutate 1 "(j) AUTH_MCRED の service を変える" "${mcred}[\"service\"] = \"other-worker\"" "services の AUTH_MCRED"
-mutate 1 "(j) entrypoint の無い services を足す" \
-  'cfg["services"].append({"binding": "AUTH_WORKER", "service": "auth-worker"})' "services に AUTH_WORKER がある"
+aw='next(s for s in cfg["services"] if s["binding"] == "AUTH_WORKER")'
+mutate 1 "(j) AUTH_WORKER を消す" \
+  'cfg["services"] = [s for s in cfg["services"] if s["binding"] != "AUTH_WORKER"]' "services の AUTH_WORKER"
+mutate 1 "(j) AUTH_WORKER を 2 本にする" 'cfg["services"].append({"binding": "AUTH_WORKER", "service": "auth-worker"})' \
+  "services の AUTH_WORKER"
+mutate 1 "(j) AUTH_WORKER に entrypoint を付ける" "${aw}[\"entrypoint\"] = \"InternalEntrypoint\"" "services に AUTH_WORKER がある"
+mutate 1 "(j) AUTH_WORKER の service を変える" "${aw}[\"service\"] = \"alc-lineworks\"" "services に AUTH_WORKER がある"
+mutate 1 "(j) entrypoint の無い別の services を足す" \
+  'cfg["services"].append({"binding": "OTHER", "service": "auth-worker"})' "services に OTHER がある"
 mutate 1 "(j) services を env へ置く" \
   'cfg["env"] = {"prod": {"services": [dict(cfg["services"][0])]}}' "env.prod.services がある"
 mutate 1 "(j) env 以外の表の奥に services" 'cfg["observability"]["services"] = [dict(cfg["services"][0])]' \
@@ -177,6 +184,11 @@ mutate 1 "(k) INTERNAL_SHARED_SECRET を消す" \
   "secrets_store_secrets の INTERNAL_SHARED_SECRET が無い"
 mutate 1 "(k) INTERNAL_SHARED_SECRET の secret_name を変える" "${shared}[\"secret_name\"] = \"OTHER\"" \
   "secret_name が INTERNAL_SHARED_SECRET でない"
+
+# (l) inform の宛先は空で置く
+mutate 1 "(l) FUEL_INFORM_TARGET に UUID を書く" \
+  'cfg["vars"]["FUEL_INFORM_TARGET"] = "{\"channel_id\":\"x\"}"' "FUEL_INFORM_TARGET が空でない"
+mutate 1 "(l) FUEL_INFORM_TARGET を消す" 'del cfg["vars"]["FUEL_INFORM_TARGET"]' "FUEL_INFORM_TARGET が無い"
 
 if bash scripts/check-exposure.sh "$tmp/none.toml" >/dev/null 2>&1; then
   echo "FAIL 存在しない toml: exit 0, want 非 0"; fail=1

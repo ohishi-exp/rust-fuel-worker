@@ -5,10 +5,13 @@
 //!   成功は 200 `{"ok":true}`、失敗は 503 `{"ok":false,"stage":…}`。認可を求めない
 //! - それ以外の `/api/fuel/*`: header `X-Tenant-ID` が var `FUEL_TENANT_ID` と一致することを求める
 //!   (`fuel_logic::auth`)。参照(starts・intank・unregistered-cards・cars・cards)と編集(cards の追加・変更・削除、
-//!   給油行の dtako_row_id の付け替えと手入力の行の削除)、UTRAN.CSV の取り込み (`inbox`。uploads)
+//!   給油行の dtako_row_id の付け替えと手入力の行の削除・手入力の追加・recheck)、手入力の伝票番号の候補
+//!   (manual-candidates)、UTRAN.CSV の取り込み (`inbox`。uploads)
 //! - `POST /machine/fuel-utran/uploads`: USB 常駐アプリからの UTRAN.CSV (auth-worker の machine-relay が中継)。
 //!   X-Tenant-ID ではなく共有 secret `X-Internal-Shared-Secret` と auth-worker の RPC `issueTicket` で通す (`machine`)
 //! - それ以外の path は 404。1 リクエスト 1 接続(`db`)
+//! - 定時実行: `*/10 * * * *` は R2 の取り込み直し (`inbox`)、`0 4 * * *` (13:00 JST) は給油データの届き具合の
+//!   LINE WORKS への通知 (`inform`)
 //!
 //! 到達面: fetch は Service Binding からだけ届く(route・workers.dev・preview 無し)。JWT は auth-worker が検証し、
 //! この Worker は付け直された `X-Tenant-ID` を信頼する。エラーの文言・宛先・ユーザー名は応答にもログにも出さない
@@ -17,6 +20,7 @@
 mod cards;
 mod db;
 mod inbox;
+mod inform;
 mod ingest;
 mod intank;
 mod machine;
@@ -24,9 +28,13 @@ mod machine;
 use fuel_logic::access::Access;
 use fuel_logic::api::ApiError;
 use fuel_logic::auth::{authorize, needs_tenant, TENANT_HEADER, TENANT_VAR};
+use fuel_logic::inform::INFORM_CRON;
 use fuel_logic::reply::{log_line, reply_for, Failure, Reply, Stage};
 use fuel_logic::route::{reply_for_route, route, Route};
-use worker::{console_error, console_log, event, Context, Date, Env, Request, Response};
+use worker::{
+    console_error, console_log, event, Context, Date, Env, Request, Response, ScheduleContext,
+    ScheduledEvent,
+};
 
 const HEALTH_SQL: &str = "SELECT 1";
 
@@ -91,7 +99,12 @@ async fn health(env: &Env) -> Result<(), Failure> {
 fn route_name(route: Route) -> &'static str {
     match route {
         Route::Starts => "starts",
-        Route::IntankList | Route::IntankPatch(_) | Route::IntankDelete(_) => "intank",
+        Route::IntankList
+        | Route::IntankCreate
+        | Route::IntankPatch(_)
+        | Route::IntankDelete(_)
+        | Route::IntankRecheck(_) => "intank",
+        Route::ManualCandidates => "manual-candidates",
         Route::UnregisteredCards => "unregistered-cards",
         Route::Cars => "cars",
         _ => "cards",
@@ -116,6 +129,9 @@ async fn api(env: &Env, route: Route, query: Option<&str>, body: &str) -> Result
         Route::IntankList => intank::list(env, query).await,
         Route::IntankPatch(key) => intank::patch(env, key, body).await,
         Route::IntankDelete(key) => intank::delete(env, key).await,
+        Route::IntankCreate => intank::create(env, body).await,
+        Route::IntankRecheck(key) => intank::recheck(env, key).await,
+        Route::ManualCandidates => intank::manual_candidates(env).await,
         Route::UnregisteredCards => cards::unregistered(env).await,
         Route::Cars => cards::cars(env).await,
         Route::CardsList => cards::list(env).await,
@@ -131,6 +147,17 @@ async fn api(env: &Env, route: Route, query: Option<&str>, body: &str) -> Result
         | Route::BadPath
         | Route::NotFound
         | Route::MethodNotAllowed => Err(ApiError::NotFound),
+    }
+}
+
+/// 定時実行: `0 4 * * *` (13:00 JST) は給油データの届き具合の通知 (`inform`)、それ以外 (`*/10 * * * *`) は
+/// R2 の `utran/` の取り込み直し (`inbox::sweep`)。
+#[event(scheduled)]
+async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
+    if event.cron() == INFORM_CRON {
+        inform::run(&env).await;
+    } else {
+        inbox::sweep(&env).await;
     }
 }
 

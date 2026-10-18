@@ -8,6 +8,8 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
+use chrono::NaiveDateTime;
+
 use fuel_logic::access::Access;
 use fuel_logic::api::{bind, ApiError};
 use fuel_logic::csv::Row;
@@ -51,7 +53,7 @@ async fn run(session: &mut Session, rows: &[Row]) -> Result<Summary, ApiError> {
     let mut fresh = Vec::with_capacity(plan.fresh.len());
     for &row in &plan.fresh {
         let id = match needs_match(row) {
-            true => dtako_row_id(session, row, &mut cars).await?,
+            true => dtako_row_id(session, row.fuel_card_id, row.datetime, &mut cars).await?,
             false => None,
         };
         fresh.push((row, id));
@@ -73,23 +75,25 @@ fn first_span(set: &ResultSet) -> Option<Span> {
 }
 
 /// 1 行の dtako_row_id。カードが無い・運行が無い・時間外は `None`。
-async fn dtako_row_id(
+/// `cars` は fuel_card_id ごとの car_id の控え (手入力・recheck の 1 行だけのときは空で渡す)。
+pub(crate) async fn dtako_row_id(
     session: &mut Session,
-    row: &Row,
+    fuel_card_id: u64,
+    datetime: NaiveDateTime,
     cars: &mut HashMap<u64, Option<String>>,
 ) -> Result<Option<Digits>, ApiError> {
-    if let Entry::Vacant(slot) = cars.entry(row.fuel_card_id) {
-        let set = query_bound(session, CARD_SQL, &card_params(row.fuel_card_id)).await?;
+    if let Entry::Vacant(slot) = cars.entry(fuel_card_id) {
+        let set = query_bound(session, CARD_SQL, &card_params(fuel_card_id)).await?;
         slot.insert(set.text(0, 0).map(str::to_string));
     }
-    let car = cars.get(&row.fuel_card_id).and_then(Option::as_deref);
-    let Some(params) = span_params(car, row.datetime) else {
+    let car = cars.get(&fuel_card_id).and_then(Option::as_deref);
+    let Some(params) = span_params(car, datetime) else {
         return Ok(None);
     };
     let within = first_span(&query_bound(session, WITHIN_SQL, &params).await?);
-    if let Some(id) = decide(row.datetime, within, None) {
+    if let Some(id) = decide(datetime, within, None) {
         return Ok(Some(id));
     }
     let after = first_span(&query_bound(session, AFTER_SQL, &params).await?);
-    Ok(decide(row.datetime, within, after))
+    Ok(decide(datetime, within, after))
 }

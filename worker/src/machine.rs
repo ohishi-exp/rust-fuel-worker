@@ -76,8 +76,8 @@ pub(crate) async fn upload(mut req: Request, env: &Env) -> worker::Result<Respon
     store_and_ingest(env, bytes, &sha, meta.into_iter().collect()).await
 }
 
-/// 共有 secret (Secrets Store)。binding が無い・読めない・空なら `None` (503)。
-async fn shared_secret(env: &Env) -> Option<String> {
+/// 共有 secret (Secrets Store)。binding が無い・読めない・空なら `None` (503)。inform の送信 (`crate::inform`) も同じ値を使う。
+pub(crate) async fn shared_secret(env: &Env) -> Option<String> {
     let store = env.secret_store(SHARED_SECRET_BINDING).ok()?;
     store.get().await.ok().flatten().filter(|s| !s.is_empty())
 }

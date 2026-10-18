@@ -1,23 +1,29 @@
-//! fuel_intank の口(`GET /api/fuel/starts`・`GET /api/fuel/intank`・`PATCH`/`DELETE /api/fuel/intank/{key}`)。
-//! SQL と JSON の組み立ては `fuel_logic::intank`、ここは DB とのやり取りの順番だけ。
+//! fuel_intank の口(`GET /api/fuel/starts`・`GET`/`POST /api/fuel/intank`・`PATCH`/`DELETE /api/fuel/intank/{key}`・
+//! `POST /api/fuel/intank/{key}/recheck`・`GET /api/fuel/manual-candidates`)。
+//! SQL と JSON の組み立ては `fuel_logic::intank` と `fuel_logic::manual`、ここは DB とのやり取りの順番だけ。
 //! 入力の検査は接続を開く前に済ませる(400 で DB に繋がない)。
 
 use std::collections::HashMap;
 
 use fuel_logic::access::Access;
-use fuel_logic::api::{ok, parse_datetime, query_param, require_row, ApiError};
+use fuel_logic::api::{ok, parse_datetime, query_param, require_row, with_status, ApiError};
 use fuel_logic::intank::{
     array_json, by_start_json, by_start_sql, check_deletable, delete_sql, follow_ups, item_json,
     list_json, parse_fuel_rows, parse_patch, parse_start, patch_sql, row_sql, start_row_sql,
     starts_json, sum_json, LATEST_SQL, STARTS_SQL,
 };
+use fuel_logic::manual::{
+    candidates_json, candidates_sql, decide_recheck, decide_write, parse_create, recheck_sql,
+    write_sql, write_status, Recheck, LAST_INSERTED_SQL,
+};
 use fuel_logic::reply::Reply;
 use fuel_logic::route::IntankKey;
 use kintai_mysql::response::ResultSet;
 use serde_json::{Map, Value as Json};
-use worker::Env;
+use worker::{Date, Env};
 
 use crate::db::{query_rows, Session};
+use crate::ingest::dtako_row_id;
 use crate::with_session;
 
 pub async fn starts(env: &Env) -> Result<Reply, ApiError> {
@@ -90,6 +96,56 @@ pub async fn delete(env: &Env, key: IntankKey) -> Result<Reply, ApiError> {
             .await
             .map_err(ApiError::from_write)?;
         Ok(ok(Map::new()))
+    })
+    .await
+}
+
+/// 手入力の伝票番号の候補 (直近 2 か月の `slip_num + 1` の空き番号と、最新の行の `slip_num + 1`)。
+pub async fn manual_candidates(env: &Env) -> Result<Reply, ApiError> {
+    let now = fuel_logic::inform::jst_now(Date::now().as_millis());
+    let sql = candidates_sql(now)?;
+    with_session(env, Access::Read, async |s| {
+        let candidates = query_rows(s, &sql).await?;
+        let last = query_rows(s, LAST_INSERTED_SQL).await?;
+        Ok(ok(candidates_json(&candidates, &last)))
+    })
+    .await
+}
+
+/// 手入力の追加 (addNew)。新規は 201、manual の行の上書きは 200、CSV 由来の行があれば 409。応答は書いた後の行。
+pub async fn create(env: &Env, body: &str) -> Result<Reply, ApiError> {
+    let row = parse_create(body)?;
+    with_session(env, Access::Write, async |s| {
+        let write = decide_write(&query_rows(s, &row_sql(row.key)?).await?)?;
+        let dtako = match row.is_start() {
+            true => None,
+            false => {
+                let at = row.key.datetime;
+                dtako_row_id(s, row.key.fuel_card_id, at, &mut HashMap::new()).await?
+            }
+        };
+        query_rows(s, &write_sql(write, &row, dtako)?)
+            .await
+            .map_err(ApiError::from_write)?;
+        let item = item_json(&query_rows(s, &row_sql(row.key)?).await?)?;
+        Ok(with_status(write_status(write), item))
+    })
+    .await
+}
+
+/// dtako_row_id の照合し直し (recheck)。照合の結果を入れて manual を NULL にする。応答は更新後の行。
+pub async fn recheck(env: &Env, key: IntankKey) -> Result<Reply, ApiError> {
+    with_session(env, Access::Write, async |s| {
+        let id = match decide_recheck(key, &query_rows(s, &row_sql(key)?).await?)? {
+            Recheck::Keep(id) => id,
+            Recheck::Match(k) => {
+                dtako_row_id(s, k.fuel_card_id, k.datetime, &mut HashMap::new()).await?
+            }
+        };
+        query_rows(s, &recheck_sql(key, id)?)
+            .await
+            .map_err(ApiError::from_write)?;
+        Ok(ok(item_json(&query_rows(s, &row_sql(key)?).await?)?))
     })
     .await
 }
