@@ -8,6 +8,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
+use fuel_logic::access::Access;
 use fuel_logic::api::{bind, ApiError};
 use fuel_logic::csv::Row;
 use fuel_logic::dtako_match::{
@@ -25,7 +26,7 @@ use crate::with_session;
 
 /// 行を取り込む (1 リクエスト 1 接続)。失敗は段と種別だけ。
 pub(crate) async fn ingest(env: &Env, rows: &[Row]) -> Result<Summary, ApiError> {
-    with_session(env, async |s| run(s, rows).await).await
+    with_session(env, Access::Write, async |s| run(s, rows).await).await
 }
 
 async fn query_bound(

@@ -12,7 +12,7 @@ Refs yhonda-ohishi/nginx#814
 | `scripts/` | `check-exposure.sh` (外から届かないことの検査) とその陰性対照、`check_coverage_100.sh` |
 
 MariaDB への接続部品は [ohishi-exp/rust-ichibanboshi](https://github.com/ohishi-exp/rust-ichibanboshi) の共有 crate (`vpc-mysql`・`kintai-mysql`) を rev 固定の git 依存で使う。
-勤怠 Worker と同じ VPC Service (`KINTAI_MARIADB_VPC`) を共用し、資格情報だけ別の secret (`FUEL_MARIADB`) を使う。
+勤怠 Worker と同じ VPC Service (`KINTAI_MARIADB_VPC`) を共用し、資格情報は書き込みと分かる形で 2 本に分ける。読み取りは勤怠 Worker と共用の Secrets Store の `KINTAI_MARIADB`、書き込みは fuel 専用の `FUEL_MARIADB_WRITE` (fuel_intank・fuel_cards の INSERT・UPDATE・DELETE と、照合のための dtako_rows・fuel_cards の SELECT)。口ごとの種別は呼び出し側が `Access::Read` / `Access::Write` で必ず明示する (既定値は無い。`logic/src/access.rs`)。書き込みの口は前段の SELECT も Write の接続で行う (1 リクエスト 1 接続)。
 
 ## 口
 
@@ -59,5 +59,5 @@ toolchain は Rust 1.92.0 (target wasm32-unknown-unknown)、`worker-build` 0.8.7
 タグ `v*` の push で本番に `wrangler deploy` する (`.github/workflows/deploy.yml`。staging は無い)。merge では出ない。
 deploy の前に CI (`ci.yml`) と同じ検査が通る必要がある。token は org の secret `CLOUDFLARE_API_TOKEN`。
 
-初回は Secrets Store の `FUEL_MARIADB` (JSON。キー user / password / database) の投入と、R2 バケット `fuel-inbox` の作成が要る
-(未投入でも deploy はでき、health は 503 `stage=secret` を返す)。
+初回は Secrets Store の `FUEL_MARIADB_WRITE` (JSON。キー user / password / database。`KINTAI_MARIADB` は勤怠 Worker が投入済み) の投入と、R2 バケット `fuel-inbox` の作成が要る
+(未投入でも deploy はでき、該当の口は 503 `stage=secret` を返す)。
