@@ -7,6 +7,10 @@
 # logic/src/lib.rs は mod 宣言だけなので登録しない。cargo-llvm-cov は計測対象のソースが 1 ファイルだと見出し行を出さず
 # gate が読めなくなるので、logic は 2 ファイル以上に分けておく。
 
+# MariaDB の接続の種別 (Read / Write) と secret の binding 名
+[[files]]
+path = "logic/src/access.rs"
+
 # 経路判定 (GET /api/fuel/health の 1 本。それ以外は 404 / 405)
 [[files]]
 path = "logic/src/route.rs"

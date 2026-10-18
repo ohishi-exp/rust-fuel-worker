@@ -4,13 +4,14 @@
 //! [`query_rows`](COM_QUERY を 1 本流して結果セットを読む)・[`close`](COM_QUIT を送って閉じる)。
 //! SQL は呼び手が `fuel_logic::api::bind`(`kintai_mysql::bind::expand`)で値を入れてから渡す。
 //!
-//! 資格情報は Secrets Store の binding `FUEL_MARIADB` から読む。エラーの文言・宛先・ユーザー名は返さない
+//! 資格情報は種別 (`Access`) ごとの Secrets Store の binding から読む (Read = `KINTAI_MARIADB`・Write = `FUEL_MARIADB_WRITE`)。エラーの文言・宛先・ユーザー名は返さない
 //! (段と種別だけ)。
 
 use std::future::Future;
 use std::pin::pin;
 use std::time::Duration;
 
+use fuel_logic::access::Access;
 use fuel_logic::reply::{Failure, Stage};
 use futures_util::future::{select, Either};
 use kintai_mysql::response::ResultSet;
@@ -31,14 +32,11 @@ const QUERY_TIMEOUT: Duration = Duration::from_secs(65);
 const MARIADB_VPC_BINDING: &str = "KINTAI_MARIADB_VPC";
 /// `connect()` に渡す名目のアドレス(VPC Service 側で宛先を固定するので使われない。社内のアドレスはコードに書かない)。
 const MARIADB_NOMINAL_ADDR: &str = "fuel-mariadb:3306";
-/// 資格情報の Secrets Store の binding。
-const CREDS_BINDING: &str = "FUEL_MARIADB";
-
 const SET_STATEMENT_TIME: &str = "SET SESSION max_statement_time=60";
 
-/// 資格情報を読んで 1 接続を開く。資格情報が無い・読めないは `Stage::Secret`。
-pub async fn open_session(env: &Env) -> Result<Session, Failure> {
-    let creds = load_creds(env)
+/// 種別の資格情報を読んで 1 接続を開く。資格情報が無い・読めないは `Stage::Secret`。
+pub async fn open_session(env: &Env, access: Access) -> Result<Session, Failure> {
+    let creds = load_creds(env, access)
         .await
         .ok_or(Failure::new(Stage::Secret, "missing"))?;
     open(env, &creds).await
@@ -124,8 +122,8 @@ async fn step<T>(
 }
 
 /// 資格情報を読んで検証する。binding が無い・secret が未投入・JSON が不正は `None`(中身はどこにも出さない)。
-async fn load_creds(env: &Env) -> Option<Creds> {
-    let store = env.secret_store(CREDS_BINDING).ok()?;
+async fn load_creds(env: &Env, access: Access) -> Option<Creds> {
+    let store = env.secret_store(access.secret_binding()).ok()?;
     let json = store.get().await.ok().flatten()?;
     parse_creds(&json)
 }

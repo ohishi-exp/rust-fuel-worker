@@ -8,7 +8,8 @@
 #       (env.* を含む表の奥) のどこにも無い
 #   (e) wrangler.toml のどこにも `LOCAL_` で始まる var (キー) が無い (ローカルで VPC や Secrets Store を迂回する口を作らない)
 #   (f) vpc_services の service_id がプレースホルダのままなら warning (fail にはしない)
-#   (g) トップレベルの secrets_store_secrets に FUEL_MARIADB (secret_name も同名) があり、secrets_store_secrets が
+#   (g) トップレベルの secrets_store_secrets に KINTAI_MARIADB (読み取り。勤怠 Worker と共用) と FUEL_MARIADB_WRITE
+#       (書き込み) が 1 本ずつ (secret_name も同名) あり、それ以外は INTERNAL_SHARED_SECRET だけ。secrets_store_secrets が
 #       トップレベル以外のどこにも無い
 #   (h) r2_buckets がトップレベル以外のどこにも無い (R2 への口をトップレベルの外へ置かない)
 #   (i) トップレベルの [vars] に FUEL_TENANT_ID があり、値が空 (本番の tenant の UUID は deploy.yml が --var で渡す。
@@ -99,13 +100,18 @@ for v in vpcs or []:
     if isinstance(v, dict) and v.get("service_id") == PLACEHOLDER:
         print(f"::warning file={path}::vpc_services {v.get('binding')} の service_id がプレースホルダのまま (VPC Service 作成後に入れる)")
 
-# (g) 資格情報の secret FUEL_MARIADB はトップレベル
+# (g) 資格情報の secret は読み取り (KINTAI_MARIADB) と書き込み (FUEL_MARIADB_WRITE) の 2 本だけ (+ INTERNAL_SHARED_SECRET)
 secrets = cfg.get("secrets_store_secrets")
-fuel = [s for s in secrets if isinstance(s, dict) and s.get("binding") == "FUEL_MARIADB"] if isinstance(secrets, list) else []
-if not fuel:
-    err("トップレベルに secrets_store_secrets の FUEL_MARIADB が無い (MariaDB の資格情報)")
-elif fuel[0].get("secret_name") != "FUEL_MARIADB":
-    err("FUEL_MARIADB の secret_name が FUEL_MARIADB でない")
+secrets_list = secrets if isinstance(secrets, list) else []
+for want in ("KINTAI_MARIADB", "FUEL_MARIADB_WRITE"):
+    found = [s for s in secrets_list if isinstance(s, dict) and s.get("binding") == want]
+    if len(found) != 1:
+        err(f"トップレベルに secrets_store_secrets の {want} が無い (または複数ある。MariaDB の資格情報)")
+    elif found[0].get("secret_name") != want:
+        err(f"{want} の secret_name が {want} でない")
+for s in secrets_list:
+    if isinstance(s, dict) and s.get("binding") not in ("KINTAI_MARIADB", "FUEL_MARIADB_WRITE", "INTERNAL_SHARED_SECRET"):
+        err(f"secrets_store_secrets に想定外の binding {s.get('binding')} がある (KINTAI_MARIADB・FUEL_MARIADB_WRITE・INTERNAL_SHARED_SECRET だけ)")
 for name in nested(cfg, "secrets_store_secrets"):
     err(f"{name} がある (secrets_store_secrets はトップレベルにだけ置く)")
 

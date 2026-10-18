@@ -124,11 +124,26 @@ mutate 0 "(e) vars に NOT_LOCAL_X (接頭辞でない)" 'cfg.setdefault("vars",
 mutate 0 "(f) service_id がプレースホルダ (warning のみ)" \
   'cfg["vpc_services"][0]["service_id"] = "00000000-0000-0000-0000-000000000000"' "プレースホルダのまま"
 # (g) 資格情報の secret
-mutate 1 "(g) secrets_store_secrets を消す" 'del cfg["secrets_store_secrets"]' "secrets_store_secrets の FUEL_MARIADB が無い"
-mutate 1 "(g) FUEL_MARIADB の binding 名を変える" 'cfg["secrets_store_secrets"][0]["binding"] = "OTHER"' \
-  "secrets_store_secrets の FUEL_MARIADB が無い"
-mutate 1 "(g) FUEL_MARIADB の secret_name を変える" 'cfg["secrets_store_secrets"][0]["secret_name"] = "OTHER"' \
-  "secret_name が FUEL_MARIADB でない"
+kintai='next(s for s in cfg["secrets_store_secrets"] if s["binding"] == "KINTAI_MARIADB")'
+write='next(s for s in cfg["secrets_store_secrets"] if s["binding"] == "FUEL_MARIADB_WRITE")'
+mutate 1 "(g) secrets_store_secrets を消す" 'del cfg["secrets_store_secrets"]' "secrets_store_secrets の KINTAI_MARIADB が無い"
+mutate 1 "(g) KINTAI_MARIADB を消す (読み取りが無い)" \
+  'cfg["secrets_store_secrets"] = [s for s in cfg["secrets_store_secrets"] if s["binding"] != "KINTAI_MARIADB"]' \
+  "secrets_store_secrets の KINTAI_MARIADB が無い"
+mutate 1 "(g) FUEL_MARIADB_WRITE を消す (書き込みが無い)" \
+  'cfg["secrets_store_secrets"] = [s for s in cfg["secrets_store_secrets"] if s["binding"] != "FUEL_MARIADB_WRITE"]' \
+  "secrets_store_secrets の FUEL_MARIADB_WRITE が無い"
+mutate 1 "(g) KINTAI_MARIADB の binding 名を変える" "${kintai}[\"binding\"] = \"OTHER\"" \
+  "secrets_store_secrets の KINTAI_MARIADB が無い"
+mutate 1 "(g) FUEL_MARIADB_WRITE の binding 名を変える" "${write}[\"binding\"] = \"OTHER\"" \
+  "secrets_store_secrets の FUEL_MARIADB_WRITE が無い"
+mutate 1 "(g) KINTAI_MARIADB の secret_name をずらす" "${kintai}[\"secret_name\"] = \"FUEL_MARIADB_WRITE\"" \
+  "KINTAI_MARIADB の secret_name が KINTAI_MARIADB でない"
+mutate 1 "(g) FUEL_MARIADB_WRITE の secret_name をずらす" "${write}[\"secret_name\"] = \"KINTAI_MARIADB\"" \
+  "FUEL_MARIADB_WRITE の secret_name が FUEL_MARIADB_WRITE でない"
+mutate 1 "(g) 想定外の secret (旧名) を足す" \
+  'cfg["secrets_store_secrets"].append({"binding": "FUEL_MARIADB_OLD", "store_id": "x", "secret_name": "FUEL_MARIADB_OLD"})' \
+  "想定外の binding FUEL_MARIADB_OLD がある"
 mutate 1 "(g) secrets_store_secrets を env へ動かす" \
   'cfg["env"] = {"prod": {"secrets_store_secrets": cfg.pop("secrets_store_secrets")}}' "env.prod.secrets_store_secrets がある"
 mutate 1 "(g) トップレベルに残したまま env にも置く" \

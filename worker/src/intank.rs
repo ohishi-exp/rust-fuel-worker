@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 
+use fuel_logic::access::Access;
 use fuel_logic::api::{ok, parse_datetime, query_param, require_row, ApiError};
 use fuel_logic::intank::{
     array_json, by_start_json, by_start_sql, check_deletable, delete_sql, follow_ups, item_json,
@@ -20,7 +21,7 @@ use crate::db::{query_rows, Session};
 use crate::with_session;
 
 pub async fn starts(env: &Env) -> Result<Reply, ApiError> {
-    with_session(env, async |s| {
+    with_session(env, Access::Read, async |s| {
         Ok(ok(starts_json(&query_rows(s, STARTS_SQL).await?)))
     })
     .await
@@ -32,7 +33,7 @@ pub async fn list(env: &Env, query: Option<&str>) -> Result<Reply, ApiError> {
         Some(v) => Some(parse_datetime(&v).ok_or(ApiError::BadRequest("start"))?),
         None => None,
     };
-    with_session(env, async |s| match start {
+    with_session(env, Access::Read, async |s| match start {
         Some(dt) => by_start(s, dt).await,
         None => Ok(ok(list_json(&query_rows(s, LATEST_SQL).await?))),
     })
@@ -71,7 +72,7 @@ async fn cached(
 /// dtako_row_id の付け替え。応答は付け替えた後の行。
 pub async fn patch(env: &Env, key: IntankKey, body: &str) -> Result<Reply, ApiError> {
     let dtako_row_id = parse_patch(body)?;
-    with_session(env, async |s| {
+    with_session(env, Access::Write, async |s| {
         require_row(&query_rows(s, &row_sql(key)?).await?)?;
         query_rows(s, &patch_sql(key, dtako_row_id)?)
             .await
@@ -83,7 +84,7 @@ pub async fn patch(env: &Env, key: IntankKey, body: &str) -> Result<Reply, ApiEr
 
 /// manual が真の行だけ消す(そうでなければ 409)。
 pub async fn delete(env: &Env, key: IntankKey) -> Result<Reply, ApiError> {
-    with_session(env, async |s| {
+    with_session(env, Access::Write, async |s| {
         check_deletable(&query_rows(s, &row_sql(key)?).await?)?;
         query_rows(s, &delete_sql(key)?)
             .await

@@ -21,6 +21,7 @@ mod ingest;
 mod intank;
 mod machine;
 
+use fuel_logic::access::Access;
 use fuel_logic::api::ApiError;
 use fuel_logic::auth::{authorize, needs_tenant, TENANT_HEADER, TENANT_VAR};
 use fuel_logic::reply::{log_line, reply_for, Failure, Reply, Stage};
@@ -77,7 +78,7 @@ async fn run_health(env: &Env) -> Reply {
 }
 
 async fn health(env: &Env) -> Result<(), Failure> {
-    let mut session = db::open_session(env).await?;
+    let mut session = db::open_session(env, Access::Read).await?;
     let result = db::query_rows(&mut session, HEALTH_SQL).await;
     db::close(session).await;
     match result?.text(0, 0) {
@@ -133,12 +134,13 @@ async fn api(env: &Env, route: Route, query: Option<&str>, body: &str) -> Result
     }
 }
 
-/// 1 接続を開いて `f` を走らせ、結果に関わらず閉じる。
+/// 種別 `access` の 1 接続を開いて `f` を走らせ、結果に関わらず閉じる。
 async fn with_session<T>(
     env: &Env,
+    access: Access,
     f: impl AsyncFnOnce(&mut db::Session) -> Result<T, ApiError>,
 ) -> Result<T, ApiError> {
-    let mut session = db::open_session(env).await?;
+    let mut session = db::open_session(env, access).await?;
     let result = f(&mut session).await;
     db::close(session).await;
     result

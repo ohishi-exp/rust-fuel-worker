@@ -35,12 +35,20 @@ binding = "KINTAI_MARIADB_VPC"
 service_id = "01a12419-659c-7b21-ac68-945c6f23ccc8"
 remote = true
 
-# MariaDB の資格情報。store_id は Secrets Store の id、secret_name は secret 名 (どちらも値そのものではない)。
-# 中身は JSON (キー user/password/database。値は repo に書かない)。未投入なら GET /api/fuel/health は 503 (stage=secret)
+# MariaDB の資格情報は 2 本に分ける。store_id は Secrets Store の id、secret_name は secret 名 (どちらも値そのものではない)。
+# 中身は JSON (キー user/password/database。値は repo に書かない)。未投入なら該当の口は 503 (stage=secret)
+# 読み取り専用。勤怠 Worker と共用 (GET /api/fuel/health・starts・intank・unregistered-cards・cars・cards)
 [[secrets_store_secrets]]
-binding = "FUEL_MARIADB"
+binding = "KINTAI_MARIADB"
 store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
-secret_name = "FUEL_MARIADB"
+secret_name = "KINTAI_MARIADB"
+
+# 書き込み用。fuel_intank・fuel_cards の INSERT・UPDATE・DELETE と、照合のための dtako_rows・fuel_cards の SELECT
+# (cards の POST/PATCH/DELETE・intank の PATCH/DELETE・UTRAN.CSV の取り込み = uploads・machine・定時)
+[[secrets_store_secrets]]
+binding = "FUEL_MARIADB_WRITE"
+store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
+secret_name = "FUEL_MARIADB_WRITE"
 
 # 給油 CSV の受け取り置き場 (CSV の取り込み = 後続 PR で使う)。バケットはこの PR では作らない。
 [[r2_buckets]]
