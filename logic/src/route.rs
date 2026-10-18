@@ -11,12 +11,15 @@
 //! | `/api/fuel/cars` | GET |
 //! | `/api/fuel/cards` | GET・POST |
 //! | `/api/fuel/cards/{id}` | GET・PATCH・DELETE |
+//! | `/api/fuel/uploads` | POST (UTRAN.CSV の取り込み。`crate::inbox`) |
+//! | `/api/fuel/uploads/{sha256}` | GET |
 //!
 //! path が合って method が違えば 405、path の値 (id・日時) が読めなければ 400、それ以外の path は 404。
 
 use chrono::NaiveDateTime;
 
 use crate::api::{parse_datetime, parse_id, percent_decode};
+use crate::inbox::{parse_sha256, Sha256Hex};
 use crate::reply::Reply;
 
 /// fuel_intank の主キー (datetime, fuel_card_id)。
@@ -42,6 +45,10 @@ pub enum Route {
     CardGet(u64),
     CardPatch(u64),
     CardDelete(u64),
+    /// `POST /api/fuel/uploads`
+    Upload,
+    /// `GET /api/fuel/uploads/{sha256}`
+    Download(Sha256Hex),
     /// path の値が読めない (400)
     BadPath,
     NotFound,
@@ -104,6 +111,11 @@ pub fn route(method: &str, path: &str) -> Route {
             _ => Route::MethodNotAllowed,
         },
         ["cards", id] => card_item(method, id),
+        ["uploads"] => only(method, "POST", Route::Upload),
+        ["uploads", sha] => match parse_sha256(sha) {
+            Some(sha) => only(method, "GET", Route::Download(sha)),
+            None => Route::BadPath,
+        },
         _ => Route::NotFound,
     }
 }
@@ -186,6 +198,18 @@ mod tests {
         assert_eq!(route("POST", "/api/fuel/cards/12"), Route::MethodNotAllowed);
         assert_eq!(route("GET", "/api/fuel/cards/x"), Route::BadPath);
         assert_eq!(route("GET", "/api/fuel/cards/"), Route::BadPath);
+    }
+
+    #[test]
+    fn uploads() {
+        let sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        assert_eq!(route("POST", "/api/fuel/uploads"), Route::Upload);
+        assert_eq!(route("GET", "/api/fuel/uploads"), Route::MethodNotAllowed);
+        let path = format!("/api/fuel/uploads/{sha}");
+        let want = Route::Download(parse_sha256(sha).unwrap());
+        assert_eq!(route("GET", &path), want);
+        assert_eq!(route("POST", &path), Route::MethodNotAllowed);
+        assert_eq!(route("GET", "/api/fuel/uploads/abc"), Route::BadPath);
     }
 
     #[test]
