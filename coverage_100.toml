@@ -30,3 +30,23 @@ path = "logic/src/intank.rs"
 # fuel_cards の参照・編集と select 用の一覧
 [[files]]
 path = "logic/src/cards.rs"
+
+# UTRAN.CSV の SJIS の decode と行の解釈 (start / fuel)
+[[files]]
+path = "logic/src/csv.rs"
+
+# 伝票番号の補完 (setSlipNum / setSlipNumParent)
+[[files]]
+path = "logic/src/slip.rs"
+
+# dtako_row_id の照合の判定と SQL 定数
+[[files]]
+path = "logic/src/dtako_match.rs"
+
+# 取り込みの SQL (既存キーの SELECT・複数行 INSERT) とスキップ
+[[files]]
+path = "logic/src/ingest.rs"
+
+# R2 inbox の口の判定・key・応答の形
+[[files]]
+path = "logic/src/inbox.rs"

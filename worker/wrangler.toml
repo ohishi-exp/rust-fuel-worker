@@ -49,3 +49,7 @@ bucket_name = "fuel-inbox"
 # health 以外の /api/fuel/* は 503。scripts/check-exposure.sh が空であることを検査する。
 [vars]
 FUEL_TENANT_ID = ""
+
+# 定時実行: R2 の utran/ の下を全部取り込み直す (取り込みは何度流しても同じ結果になる。worker/src/inbox.rs)
+[triggers]
+crons = ["*/10 * * * *"]
