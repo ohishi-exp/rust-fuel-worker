@@ -69,10 +69,9 @@ binding = "AUTH_MCRED"
 service = "auth-worker"
 entrypoint = "MachineCredentialEntrypoint"
 
-# auth-worker の既定の fetch (entrypoint なし)。使うのは定時の inform (13:00 JST) が叩く
-# /alc-internal-proxy/api/internal/lineworks/send の 1 path だけ (worker/src/inform.rs。nuxt-dtako-admin の
-# dtako-scraper-relay の AUTH_WORKER と同じ経路)。auth-worker の fetch 面は元から公開の route で、内部用 proxy は
-# X-Alc-Proxy-Secret (= INTERNAL_SHARED_SECRET) を見るので、この binding で増える到達は無い
+# auth-worker の既定の fetch (entrypoint なし)。nuxt-dtako-admin の dtako-scraper-relay の AUTH_WORKER と同じ形で、
+# 叩くのは定時の inform (13:00 JST) の /alc-internal-proxy/api/internal/lineworks/send の 1 path だけ (worker/src/inform.rs)。
+# 内部用 proxy は X-Alc-Proxy-Secret (= INTERNAL_SHARED_SECRET) を定数時間比較で見るので、この binding で届く範囲は実質増えない
 [[services]]
 binding = "AUTH_WORKER"
 service = "auth-worker"
@@ -83,7 +82,8 @@ service = "auth-worker"
 [vars]
 FUEL_TENANT_ID = ""
 # inform の LINE WORKS の宛先。{"channel_id":"<uuid>"} か {"recipient_id":"<uuid>"} の JSON 1 件 (rust-alc-api の
-# lineworks_channels / notify_recipients の行 id。LINE WORKS の channelId ではない)。ここは空のままにする。
+# lineworks_channels / notify_recipients の行 id。LINE WORKS の channelId ではない)。ここは空のままにし、
+# 本番は deploy.yml が repo variable FUEL_INFORM_TARGET を --var で渡す。
 # 空・不正なら inform は送らずログに 1 行出す (fail-closed)。scripts/check-exposure.sh が空であることを検査する。
 FUEL_INFORM_TARGET = ""
 

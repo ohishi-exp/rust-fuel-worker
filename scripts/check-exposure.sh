@@ -16,9 +16,12 @@
 #       git に焼かない)
 #   (j) トップレベルの services は AUTH_MCRED (service = auth-worker・entrypoint = MachineCredentialEntrypoint) と
 #       AUTH_WORKER (service = auth-worker・entrypoint なし。inform の LINE WORKS 送信が内部用 proxy を叩く) の 2 本ちょうどで、
-#       services がトップレベル以外のどこにも無い (ほかの worker・ほかの entrypoint への binding は置かない)
+#       services がトップレベル以外のどこにも無い (ほかの worker・ほかの entrypoint への binding は置かない)。
+#       AUTH_WORKER は nuxt-dtako-admin の dtako-scraper-relay と同じ形で、叩く path は lineworks/send の 1 本だけ。
+#       /alc-internal-proxy は X-Alc-Proxy-Secret (共有 secret) を定数時間比較で守るので、足しても届く範囲は実質増えない
 #   (k) トップレベルの secrets_store_secrets に INTERNAL_SHARED_SECRET (secret_name も同名) がある (USB の口の中継の確認)
-#   (l) トップレベルの [vars] に FUEL_INFORM_TARGET があり、値が空 (inform の宛先の UUID は git に書かない)
+#   (l) トップレベルの [vars] に FUEL_INFORM_TARGET があり、値が空 (inform の宛先の UUID は git に書かない。
+#       本番は deploy.yml が repo variable を --var で渡す。空でも deploy は止めない)
 # 1 つでも違えば exit 1。CI で毎回走らせる。陰性対照は scripts/check-exposure-test.sh。
 #
 #   bash scripts/check-exposure.sh [wrangler.toml]   (既定 worker/wrangler.toml)
