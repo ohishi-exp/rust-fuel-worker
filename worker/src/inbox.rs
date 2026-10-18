@@ -4,7 +4,7 @@
 //!   customMetadata (`tenant`・`source`・`uploaded_at`) を付けて put し、そのまま取り込む。
 //!   応答は `{ok, key, inserted, skipped, latest_start}`。同じ内容の再アップロードは同じ key で、取り込みはスキップで終わる
 //! - `GET /api/fuel/uploads/{sha256}`: R2 にある間だけ CSV をそのまま返す (無ければ 404)
-//! - 定時実行 (`[triggers] crons`): `utran/` の下を全部取り込み直す。取り込みは何度流しても同じ結果になるので、
+//! - 定時実行 (`[triggers] crons` の `*/10 * * * *`): `utran/` の下を全部取り込み直す。取り込みは何度流しても同じ結果になるので、
 //!   取り込み済みの目印は持たない (オブジェクトは R2 の lifecycle で 1 日で消える)
 //!
 //! USB アプリからの口 (`crate::machine`) も、認証のあと [`store_and_ingest`] で同じ put と取り込みを通す。
@@ -24,8 +24,7 @@ use fuel_logic::ingest::Summary;
 use fuel_logic::reply::Reply;
 use fuel_logic::route::Route;
 use worker::{
-    console_error, console_log, event, Bucket, Date, Env, Headers, HttpMetadata, Request, Response,
-    ScheduleContext, ScheduledEvent,
+    console_error, console_log, Bucket, Date, Env, Headers, HttpMetadata, Request, Response,
 };
 
 use crate::ingest::ingest;
@@ -167,13 +166,8 @@ async fn timed_ingest(env: &Env, rows: &[Row]) -> Result<Summary, ApiError> {
     outcome
 }
 
-#[event(scheduled)]
-async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
-    sweep(&env).await;
-}
-
-/// `utran/` の下を全部取り込み直す。1 つ失敗しても残りは続ける。
-async fn sweep(env: &Env) {
+/// `utran/` の下を全部取り込み直す。1 つ失敗しても残りは続ける (定時実行は `crate::scheduled` から)。
+pub(crate) async fn sweep(env: &Env) {
     let Some(bucket) = bucket(env) else {
         console_error!("fuel sweep: no bucket");
         return;

@@ -5,8 +5,10 @@
 //! |---|---|
 //! | `/api/fuel/health` | GET |
 //! | `/api/fuel/starts` | GET |
-//! | `/api/fuel/intank` | GET (`?start=<datetime>` 任意) |
+//! | `/api/fuel/intank` | GET (`?start=<datetime>` 任意)・POST (手入力の追加。`crate::manual`) |
 //! | `/api/fuel/intank/{datetime};{fuel_card_id}` | PATCH・DELETE |
+//! | `/api/fuel/intank/{datetime};{fuel_card_id}/recheck` | POST (dtako_row_id の照合し直し。`crate::manual`) |
+//! | `/api/fuel/manual-candidates` | GET (手入力の伝票番号の候補。`crate::manual`) |
 //! | `/api/fuel/unregistered-cards` | GET |
 //! | `/api/fuel/cars` | GET |
 //! | `/api/fuel/cards` | GET・POST |
@@ -40,8 +42,14 @@ pub enum Route {
     Health,
     Starts,
     IntankList,
+    /// `POST /api/fuel/intank` — 手入力の追加
+    IntankCreate,
     IntankPatch(IntankKey),
     IntankDelete(IntankKey),
+    /// `POST /api/fuel/intank/{key}/recheck`
+    IntankRecheck(IntankKey),
+    /// `GET /api/fuel/manual-candidates`
+    ManualCandidates,
     UnregisteredCards,
     Cars,
     CardsList,
@@ -110,8 +118,17 @@ pub fn route(method: &str, path: &str) -> Route {
     match segments.as_slice() {
         ["health"] => only(method, "GET", Route::Health),
         ["starts"] => only(method, "GET", Route::Starts),
-        ["intank"] => only(method, "GET", Route::IntankList),
+        ["intank"] => match method {
+            "GET" => Route::IntankList,
+            "POST" => Route::IntankCreate,
+            _ => Route::MethodNotAllowed,
+        },
         ["intank", key] => intank_item(method, key),
+        ["intank", key, "recheck"] => match method {
+            "POST" => parse_intank_key(key).map_or(Route::BadPath, Route::IntankRecheck),
+            _ => Route::MethodNotAllowed,
+        },
+        ["manual-candidates"] => only(method, "GET", Route::ManualCandidates),
         ["unregistered-cards"] => only(method, "GET", Route::UnregisteredCards),
         ["cars"] => only(method, "GET", Route::Cars),
         ["cards"] => match method {
@@ -167,13 +184,32 @@ mod tests {
     fn get_only_collections() {
         for (path, want) in [
             ("/api/fuel/starts", Route::Starts),
-            ("/api/fuel/intank", Route::IntankList),
             ("/api/fuel/unregistered-cards", Route::UnregisteredCards),
+            ("/api/fuel/manual-candidates", Route::ManualCandidates),
             ("/api/fuel/cars", Route::Cars),
         ] {
             assert_eq!(route("GET", path), want);
             assert_eq!(route("POST", path), Route::MethodNotAllowed);
         }
+    }
+
+    #[test]
+    fn intank_collection() {
+        assert_eq!(route("GET", "/api/fuel/intank"), Route::IntankList);
+        assert_eq!(route("POST", "/api/fuel/intank"), Route::IntankCreate);
+        assert_eq!(route("PUT", "/api/fuel/intank"), Route::MethodNotAllowed);
+    }
+
+    #[test]
+    fn intank_recheck() {
+        let k = key("2024-10-01 06:58:00", 1234);
+        let p = "/api/fuel/intank/2024-10-01%2006%3A58%3A00;1234/recheck";
+        assert_eq!(route("POST", p), Route::IntankRecheck(k));
+        assert_eq!(route("GET", p), Route::MethodNotAllowed);
+        let bad = "/api/fuel/intank/2024-10-01;1234/recheck";
+        assert_eq!(route("POST", bad), Route::BadPath);
+        let other = "/api/fuel/intank/2024-10-01%2006%3A58%3A00;1234/other";
+        assert_eq!(route("POST", other), Route::NotFound);
     }
 
     #[test]

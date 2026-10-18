@@ -58,3 +58,11 @@ path = "logic/src/inbox.rs"
 # USB アプリからの受け口 (共有 secret の定数時間比較・issueTicket の戻りの解釈・応答・customMetadata)
 [[files]]
 path = "logic/src/machine.rs"
+
+# 手入力 (伝票番号の候補・手入力の本文の検査と行の組み立て・recheck)
+[[files]]
+path = "logic/src/manual.rs"
+
+# 給油データの届き具合の通知 (判定・文面・宛先・LINE WORKS への本文)
+[[files]]
+path = "logic/src/inform.rs"

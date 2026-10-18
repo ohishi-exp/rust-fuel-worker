@@ -7,6 +7,8 @@ name: Deploy
 # wrangler の出力はファイルに取り、mask してから伏せて出す。
 # 本番の tenant は repo variable FUEL_TENANT_ID を deploy 時に --var で渡す (wrangler.toml の [vars] は空。UUID を git に焼かない。
 # rust-ichibanboshi の worker-kintai.yml の KINTAI_EVENTS_TENANT_ID と同じやり方)。
+# inform の LINE WORKS の宛先も repo variable FUEL_INFORM_TARGET を --var で渡す (wrangler.toml の [vars] は空)。
+# こちらは空でも deploy を止めない (Worker が送らずにログ 1 行で終わる。worker/src/inform.rs)。
 on:
   push:
     tags: ['v*']
@@ -116,6 +118,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           FUEL_TENANT_ID: ${{ vars.FUEL_TENANT_ID }}
+          FUEL_INFORM_TARGET: ${{ vars.FUEL_INFORM_TARGET }}
         run: |
           # tenant は小文字 hex の UUID (nil 以外) だけを通す。値は出さない。
           # 空のまま deploy すると本番の /api/fuel/* (health 以外) が 503 になるので、ここで止める
@@ -125,10 +128,17 @@ jobs:
             exit 1
           fi
           echo "::add-mask::${FUEL_TENANT_ID}"
+          # inform の宛先は空でも止めない (送らないだけ)。値は出さない
+          if [ -n "${FUEL_INFORM_TARGET}" ]; then
+            echo "::add-mask::${FUEL_INFORM_TARGET}"
+          else
+            echo "::warning::repo variable FUEL_INFORM_TARGET が空 (inform は LINE WORKS へ送らない)"
+          fi
           log="$RUNNER_TEMP/deploy.log"
           status=0
           npx -y "wrangler@${WRANGLER_VERSION}" deploy \
             --var "FUEL_TENANT_ID:${FUEL_TENANT_ID}" \
+            --var "FUEL_INFORM_TARGET:${FUEL_INFORM_TARGET}" \
             --tag "$GITHUB_REF_NAME" --message "$GITHUB_SHA" >"$log" 2>&1 || status=$?
           # 何かを出す前に mask を登録する
           grep -oE '[0-9A-Fa-f]{32}' "$log" | sort -u | while read -r hex; do

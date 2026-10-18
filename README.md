@@ -24,6 +24,26 @@ Service Binding 専用 (route・workers.dev・preview なし)。
 - `POST /machine/fuel-utran/uploads` — USB 常駐アプリからの UTRAN.CSV (下の「USB アップロード」)
 - それ以外の path は 404 (method 違いは 405)
 
+### 手入力 (CakePHP の addManual・addNew・recheck)
+
+| 口 | 接続 | 内容 |
+|---|---|---|
+| `GET /api/fuel/manual-candidates` | Read | 直近 2 か月の行の `slip_num + 1` のうち未使用の番号に、最新の行の `slip_num + 1` を足して昇順。`{ok, candidates:[n], last_inserted:{datetime, fuel_card_id, slip_num}\|null}` |
+| `POST /api/fuel/intank` | Write | 本文 `{datetime, slip_num, fuel_card_id?, quantity_decimal?, slip_num_parent?}`。fuel_card_id あり = fuel 行 (quantity = round(quantity_decimal × 100)、dtako_row_id は照合)、なし = start 行 (9999・`EP900-34`)。manual = 1。新規 201・manual の行の上書き 200・CSV 由来の行は 409 `not_manual`。応答は `{ok, row}` |
+| `POST /api/fuel/intank/{datetime};{fuel_card_id}/recheck` | Write | dtako_row_id が無い fuel 行は照合して入れ、manual を NULL にする (既にある値は変えない)。行が無ければ 404。応答は `{ok, row}` |
+
+判定と SQL は `logic/src/manual.rs`、I/O は `worker/src/intank.rs`。
+
+## 定時実行
+
+- `*/10 * * * *` — R2 の `utran/` を全部取り込み直す (`worker/src/inbox.rs`)
+- `0 4 * * *` (13:00 JST) — fuel_intank の最新の datetime が前日の 12:00 (JST) より前なら LINE WORKS に
+  `給油データが前日分まで届いていません (最新: yyyy-MM-dd HH:mm:ss)` を 1 通送る (CakePHP の inform。checkfuel.sh の後継)。
+  送り方は nuxt-dtako-admin の dtako-scraper-relay と同じで、auth-worker への Service Binding `AUTH_WORKER` で
+  `/alc-internal-proxy/api/internal/lineworks/send` を POST する (ヘッダ `X-Alc-Proxy-Secret` = `INTERNAL_SHARED_SECRET`)。
+  宛先は var `FUEL_INFORM_TARGET` (`{"channel_id":"<uuid>"}` か `{"recipient_id":"<uuid>"}`)。wrangler.toml では空で、
+  空・不正なら送らずログに 1 行 (fail-closed)。判定は `logic/src/inform.rs`、I/O は `worker/src/inform.rs`
+
 ## USB アップロード
 
 Windows に USB を挿すと常駐アプリが UTRAN.CSV を送る。経路:
