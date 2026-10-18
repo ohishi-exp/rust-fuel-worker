@@ -13,6 +13,7 @@
 //! | `/api/fuel/cards/{id}` | GET・PATCH・DELETE |
 //! | `/api/fuel/uploads` | POST (UTRAN.CSV の取り込み。`crate::inbox`) |
 //! | `/api/fuel/uploads/{sha256}` | GET |
+//! | `/machine/fuel-utran/uploads` | POST (USB アプリからの UTRAN.CSV。X-Tenant-ID ではなく共有 secret と machine credential で通す。`crate::machine`) |
 //!
 //! path が合って method が違えば 405、path の値 (id・日時) が読めなければ 400、それ以外の path は 404。
 
@@ -21,6 +22,9 @@ use chrono::NaiveDateTime;
 use crate::api::{parse_datetime, parse_id, percent_decode};
 use crate::inbox::{parse_sha256, Sha256Hex};
 use crate::reply::Reply;
+
+/// USB アプリからの取り込みの口 (auth-worker の machine-relay が中継する。`/api/fuel/` の外)。
+pub const MACHINE_UPLOAD_PATH: &str = "/machine/fuel-utran/uploads";
 
 /// fuel_intank の主キー (datetime, fuel_card_id)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +53,8 @@ pub enum Route {
     Upload,
     /// `GET /api/fuel/uploads/{sha256}`
     Download(Sha256Hex),
+    /// `POST /machine/fuel-utran/uploads`
+    MachineUpload,
     /// path の値が読めない (400)
     BadPath,
     NotFound,
@@ -94,6 +100,9 @@ fn card_item(method: &str, segment: &str) -> Route {
 }
 
 pub fn route(method: &str, path: &str) -> Route {
+    if path == MACHINE_UPLOAD_PATH {
+        return only(method, "POST", Route::MachineUpload);
+    }
     let Some(rest) = path.strip_prefix("/api/fuel/") else {
         return Route::NotFound;
     };
@@ -210,6 +219,21 @@ mod tests {
         assert_eq!(route("GET", &path), want);
         assert_eq!(route("POST", &path), Route::MethodNotAllowed);
         assert_eq!(route("GET", "/api/fuel/uploads/abc"), Route::BadPath);
+    }
+
+    #[test]
+    fn machine_upload() {
+        let p = "/machine/fuel-utran/uploads";
+        assert_eq!(route("POST", p), Route::MachineUpload);
+        assert_eq!(route("GET", p), Route::MethodNotAllowed);
+        assert_eq!(
+            route("POST", "/machine/fuel-utran/uploads/x"),
+            Route::NotFound
+        );
+        assert_eq!(route("POST", "/machine/other"), Route::NotFound);
+        assert_eq!(reply_for_route(Route::MachineUpload), None);
+        // /api/fuel/ の外なので X-Tenant-ID の認可はかからない (machine の順で通す)
+        assert!(!crate::auth::needs_tenant(p));
     }
 
     #[test]

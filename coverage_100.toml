@@ -50,3 +50,7 @@ path = "logic/src/ingest.rs"
 # R2 inbox の口の判定・key・応答の形
 [[files]]
 path = "logic/src/inbox.rs"
+
+# USB アプリからの受け口 (共有 secret の定数時間比較・issueTicket の戻りの解釈・応答・customMetadata)
+[[files]]
+path = "logic/src/machine.rs"

@@ -7,6 +7,7 @@ pub mod dtako_match;
 pub mod inbox;
 pub mod ingest;
 pub mod intank;
+pub mod machine;
 pub mod reply;
 pub mod route;
 pub mod slip;

@@ -7,6 +7,8 @@
 //! - 定時実行 (`[triggers] crons`): `utran/` の下を全部取り込み直す。取り込みは何度流しても同じ結果になるので、
 //!   取り込み済みの目印は持たない (オブジェクトは R2 の lifecycle で 1 日で消える)
 //!
+//! USB アプリからの口 (`crate::machine`) も、認証のあと [`store_and_ingest`] で同じ put と取り込みを通す。
+//!
 //! 認可 (X-Tenant-ID) は router がかける。ログには件数・段・種別だけを出す (CSV の中身・テナントは出さない)。
 
 use std::collections::HashMap;
@@ -44,28 +46,14 @@ pub(crate) async fn handle(route: Route, req: Request, env: &Env) -> worker::Res
 }
 
 async fn upload(mut req: Request, env: &Env) -> worker::Result<Response> {
-    let declared = req.headers().get("content-length")?;
-    if declared
-        .and_then(|v| v.parse::<usize>().ok())
-        .is_some_and(|n| n > MAX_BYTES)
-    {
-        return json(413, error_body("too_large"));
-    }
     let Some(source) = source(req.headers().get(SOURCE_HEADER)?.as_deref()) else {
         return json(400, error_body("bad_source"));
     };
     let tenant = req.headers().get(TENANT_HEADER)?.unwrap_or_default();
-    let bytes = req.bytes().await?;
-    if bytes.len() > MAX_BYTES {
+    let Some(bytes) = read_body(&mut req).await? else {
         return json(413, error_body("too_large"));
-    }
-    let rows = match read(&bytes) {
-        Ok(rows) if rows.is_empty() => return json(400, error_body("empty")),
-        Ok(rows) => rows,
-        Err(e) => return json(400, csv_error_body(&e)),
     };
-
-    let key = object_key(&sha256_hex(&bytes));
+    let sha = sha256_hex(&bytes);
     let meta = HashMap::from([
         ("tenant".to_string(), tenant),
         ("source".to_string(), source.to_string()),
@@ -74,6 +62,37 @@ async fn upload(mut req: Request, env: &Env) -> worker::Result<Response> {
             uploaded_at(Date::now().as_millis()),
         ),
     ]);
+    store_and_ingest(env, bytes, &sha, meta).await
+}
+
+/// body を読む。宣言の長さか実際の長さが [`MAX_BYTES`] を超えたら `None` (413)。
+pub(crate) async fn read_body(req: &mut Request) -> worker::Result<Option<Vec<u8>>> {
+    let declared = req.headers().get("content-length")?;
+    if declared
+        .and_then(|v| v.parse::<usize>().ok())
+        .is_some_and(|n| n > MAX_BYTES)
+    {
+        return Ok(None);
+    }
+    let bytes = req.bytes().await?;
+    Ok((bytes.len() <= MAX_BYTES).then_some(bytes))
+}
+
+/// CSV を読んで (読めなければ 400)、`utran/<sha256>.csv` に `meta` を customMetadata として put し、取り込む。
+/// `POST /api/fuel/uploads` と USB の口 (`crate::machine`) の共通部分。
+pub(crate) async fn store_and_ingest(
+    env: &Env,
+    bytes: Vec<u8>,
+    sha256: &str,
+    meta: HashMap<String, String>,
+) -> worker::Result<Response> {
+    let rows = match read(&bytes) {
+        Ok(rows) if rows.is_empty() => return json(400, error_body("empty")),
+        Ok(rows) => rows,
+        Err(e) => return json(400, csv_error_body(&e)),
+    };
+
+    let key = object_key(sha256);
     let csv = HttpMetadata {
         content_type: Some("text/csv".to_string()),
         ..Default::default()

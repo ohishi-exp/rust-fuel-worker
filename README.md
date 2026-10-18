@@ -3,8 +3,6 @@
 インタンク給油 (`fuel_intank` / `fuel_cards`) の Rust Worker。CakePHP の `/fuel-intank`・`/fuel-cards` (社内 MariaDB) の移行先。
 Refs yhonda-ohishi/nginx#814
 
-この repo は土台 (PR1) だけ。CSV 取り込み・参照 API・auth-worker の振り分けは後続の PR で足す。
-
 ## 構成
 
 | パス | 内容 |
@@ -22,7 +20,26 @@ Service Binding 専用 (route・workers.dev・preview なし)。
 
 - `GET /api/fuel/health` — MariaDB に繋いで `SELECT 1` を流す。成功は 200 `{"ok":true}`、失敗は 503 `{"ok":false,"stage":"secret|connect|handshake|auth|query"}`。
   エラーの文言・宛先・ユーザー名は応答にもログにも出さない (段と種別だけ)
-- それ以外の path は 404 (health の method 違いは 405)
+- `/api/fuel/*` のそれ以外 — header `X-Tenant-ID` が var `FUEL_TENANT_ID` と一致するときだけ通す参照・編集と、UTRAN.CSV の取り込み (`POST /api/fuel/uploads`)
+- `POST /machine/fuel-utran/uploads` — USB 常駐アプリからの UTRAN.CSV (下の「USB アップロード」)
+- それ以外の path は 404 (method 違いは 405)
+
+## USB アップロード
+
+Windows に USB を挿すと常駐アプリが UTRAN.CSV を送る。経路:
+
+```
+USB アプリ ─(machine credential の Basic)→ auth-worker /m/fuel-utran/uploads
+  → machine-relay (tenant を決めない・X-Tenant-* を剥がす・X-Internal-Shared-Secret と Authorization を付ける)
+  → この Worker の POST /machine/fuel-utran/uploads
+      1. X-Internal-Shared-Secret を INTERNAL_SHARED_SECRET (Secrets Store) と定数時間で照合 (無い・不一致 401 / 読めない 503)
+      2. body (5 MB まで。超えたら 413) の sha256
+      3. auth-worker の RPC issueTicket(Authorization, "fuel-utran", sha256) (binding AUTH_MCRED。null 401 / 失敗 503)
+      4. 戻りの tenantId を FUEL_TENANT_ID と突き合わせ (違えば 403)
+      5. POST /api/fuel/uploads と同じく R2 に put して取り込む (customMetadata は tenant・source=usb・uploaded_at・ticket・machine_user)
+```
+
+Authorization・ticket・secret・username は応答にもログにも出さない。判定は `logic/src/machine.rs`、I/O は `worker/src/machine.rs`。
 
 ## 開発
 

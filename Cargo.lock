@@ -144,9 +144,13 @@ dependencies = [
  "chrono",
  "fuel-logic",
  "futures-util",
+ "js-sys",
  "kintai-mysql",
+ "serde-wasm-bindgen",
  "serde_json",
  "vpc-mysql",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
  "worker",
  "worker-sys",
 ]
