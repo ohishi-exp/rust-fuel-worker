@@ -13,6 +13,9 @@
 #   (h) r2_buckets がトップレベル以外のどこにも無い (R2 への口をトップレベルの外へ置かない)
 #   (i) トップレベルの [vars] に FUEL_TENANT_ID があり、値が空 (本番の tenant の UUID は deploy.yml が --var で渡す。
 #       git に焼かない)
+#   (j) トップレベルの services は AUTH_MCRED (service = auth-worker・entrypoint = MachineCredentialEntrypoint) だけで、
+#       services がトップレベル以外のどこにも無い (entrypoint の無い binding は auth-worker の fetch 面全体に届くので置かない)
+#   (k) トップレベルの secrets_store_secrets に INTERNAL_SHARED_SECRET (secret_name も同名) がある (USB の口の中継の確認)
 # 1 つでも違えば exit 1。CI で毎回走らせる。陰性対照は scripts/check-exposure-test.sh。
 #
 #   bash scripts/check-exposure.sh [wrangler.toml]   (既定 worker/wrangler.toml)
@@ -117,7 +120,29 @@ if not isinstance(vars_, dict) or "FUEL_TENANT_ID" not in vars_:
 elif vars_["FUEL_TENANT_ID"] != "":
     err("[vars] の FUEL_TENANT_ID が空でない (tenant の UUID は git に書かず deploy.yml の --var で渡す)")
 
+# (j) services はトップレベルの AUTH_MCRED (entrypoint 付き) だけ
+MCRED = {"binding": "AUTH_MCRED", "service": "auth-worker", "entrypoint": "MachineCredentialEntrypoint"}
+services = cfg.get("services")
+if services is not None and not isinstance(services, list):
+    err("services が表の配列でない")
+    services = []
+services = services or []
+if not any(s == MCRED for s in services):
+    err("トップレベルに services の AUTH_MCRED (auth-worker / entrypoint MachineCredentialEntrypoint) が無い")
+for s in services:
+    if s != MCRED:
+        err(f"services に {s.get('binding') if isinstance(s, dict) else s} がある (置けるのは AUTH_MCRED の entrypoint 付きだけ)")
+for name in nested(cfg, "services"):
+    err(f"{name} がある (services はトップレベルにだけ置く)")
+
+# (k) USB の口の共有 secret
+shared = [s for s in secrets if isinstance(s, dict) and s.get("binding") == "INTERNAL_SHARED_SECRET"] if isinstance(secrets, list) else []
+if not shared:
+    err("トップレベルに secrets_store_secrets の INTERNAL_SHARED_SECRET が無い (USB の口の中継の確認)")
+elif shared[0].get("secret_name") != "INTERNAL_SHARED_SECRET":
+    err("INTERNAL_SHARED_SECRET の secret_name が INTERNAL_SHARED_SECRET でない")
+
 if errors:
     sys.exit(1)
-print(f"OK: {path} は workers_dev / preview_urls = false・route 無し・env 無し・vpc_services / secrets_store_secrets / r2_buckets はトップレベル・LOCAL_* 無し・FUEL_TENANT_ID は空")
+print(f"OK: {path} は workers_dev / preview_urls = false・route 無し・env 無し・vpc_services / secrets_store_secrets / r2_buckets / services はトップレベル・services は AUTH_MCRED (entrypoint 付き) だけ・LOCAL_* 無し・FUEL_TENANT_ID は空")
 PY

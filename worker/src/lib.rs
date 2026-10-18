@@ -6,6 +6,8 @@
 //! - それ以外の `/api/fuel/*`: header `X-Tenant-ID` が var `FUEL_TENANT_ID` と一致することを求める
 //!   (`fuel_logic::auth`)。参照(starts・intank・unregistered-cards・cars・cards)と編集(cards の追加・変更・削除、
 //!   給油行の dtako_row_id の付け替えと手入力の行の削除)、UTRAN.CSV の取り込み (`inbox`。uploads)
+//! - `POST /machine/fuel-utran/uploads`: USB 常駐アプリからの UTRAN.CSV (auth-worker の machine-relay が中継)。
+//!   X-Tenant-ID ではなく共有 secret `X-Internal-Shared-Secret` と auth-worker の RPC `issueTicket` で通す (`machine`)
 //! - それ以外の path は 404。1 リクエスト 1 接続(`db`)
 //!
 //! 到達面: fetch は Service Binding からだけ届く(route・workers.dev・preview 無し)。JWT は auth-worker が検証し、
@@ -17,6 +19,7 @@ mod db;
 mod inbox;
 mod ingest;
 mod intank;
+mod machine;
 
 use fuel_logic::api::ApiError;
 use fuel_logic::auth::{authorize, needs_tenant, TENANT_HEADER, TENANT_VAR};
@@ -44,6 +47,7 @@ async fn fetch(mut req: Request, env: Env, _ctx: Context) -> worker::Result<Resp
         Route::Health => run_health(&env).await,
         // 本文が CSV のバイト列 (SJIS) なので text() で読まない
         Route::Upload | Route::Download(_) => return inbox::handle(route, req, &env).await,
+        Route::MachineUpload => return machine::upload(req, &env).await,
         _ => {
             let query = req.url()?.query().map(str::to_string);
             let body = req.text().await?;
@@ -122,6 +126,7 @@ async fn api(env: &Env, route: Route, query: Option<&str>, body: &str) -> Result
         Route::Health
         | Route::Upload
         | Route::Download(_)
+        | Route::MachineUpload
         | Route::BadPath
         | Route::NotFound
         | Route::MethodNotAllowed => Err(ApiError::NotFound),

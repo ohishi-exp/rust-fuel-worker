@@ -1,12 +1,15 @@
 # rust-fuel-worker: インタンク給油 (fuel_intank / fuel_cards) の Worker。CakePHP の /fuel-intank・/fuel-cards の移行先
 # (Refs yhonda-ohishi/nginx#814)。
 # Service Binding 専用。口は GET /api/fuel/health (社内 MariaDB に繋いで SELECT 1 を流す到達の確認用・認可なし) と、
-# X-Tenant-ID が FUEL_TENANT_ID と一致するときだけ通す参照・編集の口 (/api/fuel/starts・intank・cards ほか)。
+# X-Tenant-ID が FUEL_TENANT_ID と一致するときだけ通す参照・編集の口 (/api/fuel/starts・intank・cards ほか)、
+# USB 常駐アプリからの UTRAN.CSV の口 POST /machine/fuel-utran/uploads (auth-worker の machine-relay が中継する。
+# 共有 secret INTERNAL_SHARED_SECRET で中継かを確かめ、tenant は auth-worker の RPC issueTicket (AUTH_MCRED) で決める)。
 #
 # ★ 外から届く口を持たない:
 #   - fetch は Service Binding からだけ届く (route・workers.dev・preview なし)。
 #   - workers_dev = false / preview_urls = false、route / routes を書かない、env を作らない
-#   - MariaDB への口 (vpc_services)・資格情報 (secrets_store_secrets)・R2 (r2_buckets) はトップレベルにだけ置く。
+#   - MariaDB への口 (vpc_services)・資格情報 (secrets_store_secrets)・R2 (r2_buckets)・auth-worker の RPC (services) は
+#     トップレベルにだけ置く。
 #     ローカルで迂回する LOCAL_* の var は持たない
 #   scripts/check-exposure.sh が CI で毎回これを検査する (陰性対照は scripts/check-exposure-test.sh)。
 # account_id は書かない (CLOUDFLARE_API_TOKEN から決まる)。
@@ -43,6 +46,20 @@ secret_name = "FUEL_MARIADB"
 [[r2_buckets]]
 binding = "FUEL_INBOX"
 bucket_name = "fuel-inbox"
+
+# USB の口が中継か (auth-worker の machine-relay か) を確かめる共有 secret (値は repo に無い。rust-leave-worker と同じ)。
+# 未投入なら POST /machine/fuel-utran/uploads は 503
+[[secrets_store_secrets]]
+binding = "INTERNAL_SHARED_SECRET"
+store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
+secret_name = "INTERNAL_SHARED_SECRET"
+
+# auth-worker の機械用資格情報のチケットの口 (RPC。issueTicket で Basic を照合し tenant を決める。worker/src/machine.rs)。
+# entrypoint を付けるので、呼べるのは MachineCredentialEntrypoint のメソッドだけ
+[[services]]
+binding = "AUTH_MCRED"
+service = "auth-worker"
+entrypoint = "MachineCredentialEntrypoint"
 
 # 認可で突き合わせる tenant (X-Tenant-ID と一致すること)。ここは空のままにする (UUID を git に焼かない)。
 # 本番は deploy.yml が repo variable FUEL_TENANT_ID を --var FUEL_TENANT_ID:… で渡す。空・UUID でない・nil なら
