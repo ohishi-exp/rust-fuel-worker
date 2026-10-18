@@ -14,3 +14,19 @@ path = "logic/src/route.rs"
 # 失敗の段・応答の写像・失敗ログの 1 行
 [[files]]
 path = "logic/src/reply.rs"
+
+# 参照・編集の口に共通の部品 (失敗の応答・セルの JSON 化・path / query / 本文の読み取り・SQL の展開)
+[[files]]
+path = "logic/src/api.rs"
+
+# 認可 (X-Tenant-ID と FUEL_TENANT_ID の突き合わせ)
+[[files]]
+path = "logic/src/auth.rs"
+
+# fuel_intank の参照・編集 (SQL 定数・JSON の組み立て・本文の検査)
+[[files]]
+path = "logic/src/intank.rs"
+
+# fuel_cards の参照・編集と select 用の一覧
+[[files]]
+path = "logic/src/cards.rs"

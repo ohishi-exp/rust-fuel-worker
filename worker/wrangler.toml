@@ -1,6 +1,7 @@
 # rust-fuel-worker: インタンク給油 (fuel_intank / fuel_cards) の Worker。CakePHP の /fuel-intank・/fuel-cards の移行先
 # (Refs yhonda-ohishi/nginx#814)。
-# Service Binding 専用。口は GET /api/fuel/health の 1 本 (社内 MariaDB に繋いで SELECT 1 を流す到達の確認用)。
+# Service Binding 専用。口は GET /api/fuel/health (社内 MariaDB に繋いで SELECT 1 を流す到達の確認用・認可なし) と、
+# X-Tenant-ID が FUEL_TENANT_ID と一致するときだけ通す参照・編集の口 (/api/fuel/starts・intank・cards ほか)。
 #
 # ★ 外から届く口を持たない:
 #   - fetch は Service Binding からだけ届く (route・workers.dev・preview なし)。
@@ -42,3 +43,9 @@ secret_name = "FUEL_MARIADB"
 [[r2_buckets]]
 binding = "FUEL_INBOX"
 bucket_name = "fuel-inbox"
+
+# 認可で突き合わせる tenant (X-Tenant-ID と一致すること)。ここは空のままにする (UUID を git に焼かない)。
+# 本番は deploy.yml が repo variable FUEL_TENANT_ID を --var FUEL_TENANT_ID:… で渡す。空・UUID でない・nil なら
+# health 以外の /api/fuel/* は 503。scripts/check-exposure.sh が空であることを検査する。
+[vars]
+FUEL_TENANT_ID = ""

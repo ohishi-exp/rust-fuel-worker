@@ -11,6 +11,8 @@
 #   (g) トップレベルの secrets_store_secrets に FUEL_MARIADB (secret_name も同名) があり、secrets_store_secrets が
 #       トップレベル以外のどこにも無い
 #   (h) r2_buckets がトップレベル以外のどこにも無い (R2 への口をトップレベルの外へ置かない)
+#   (i) トップレベルの [vars] に FUEL_TENANT_ID があり、値が空 (本番の tenant の UUID は deploy.yml が --var で渡す。
+#       git に焼かない)
 # 1 つでも違えば exit 1。CI で毎回走らせる。陰性対照は scripts/check-exposure-test.sh。
 #
 #   bash scripts/check-exposure.sh [wrangler.toml]   (既定 worker/wrangler.toml)
@@ -108,7 +110,14 @@ for name in nested(cfg, "secrets_store_secrets"):
 for name in nested(cfg, "r2_buckets"):
     err(f"{name} がある (r2_buckets はトップレベルにだけ置く)")
 
+# (i) 認可の tenant は空で置く (値は deploy 時に --var で渡す)
+vars_ = cfg.get("vars")
+if not isinstance(vars_, dict) or "FUEL_TENANT_ID" not in vars_:
+    err("トップレベルの [vars] に FUEL_TENANT_ID が無い (認可で突き合わせる tenant)")
+elif vars_["FUEL_TENANT_ID"] != "":
+    err("[vars] の FUEL_TENANT_ID が空でない (tenant の UUID は git に書かず deploy.yml の --var で渡す)")
+
 if errors:
     sys.exit(1)
-print(f"OK: {path} は workers_dev / preview_urls = false・route 無し・env 無し・vpc_services / secrets_store_secrets / r2_buckets はトップレベル・LOCAL_* 無し")
+print(f"OK: {path} は workers_dev / preview_urls = false・route 無し・env 無し・vpc_services / secrets_store_secrets / r2_buckets はトップレベル・LOCAL_* 無し・FUEL_TENANT_ID は空")
 PY

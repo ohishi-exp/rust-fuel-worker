@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-exposure.sh の陰性対照。wrangler.toml を tomllib で読んだ dict を 1 か所ずつ崩して TOML に書き戻し、
-# (a)〜(h) それぞれで exit 1 になること、元のまま・書き戻しただけなら exit 0 になることを確かめる。
+# (a)〜(i) それぞれで exit 1 になること、元のまま・書き戻しただけなら exit 0 になることを確かめる。
 # 4 つ目の引数を渡した行は、出力にその文字列 (どの検査が落としたか) があることも確かめる。
 # 文字列の特定の表の直前に行を挿す作りにはしない (表の中身に紛れて別の表のキーになる — rust-alc-api#698)。
 # CI で check-exposure.sh の直後に走る。
@@ -138,6 +138,11 @@ mutate 1 "(h) r2_buckets を env へ置く" \
   'cfg["env"] = {"prod": {"r2_buckets": [dict(cfg["r2_buckets"][0])]}}' "env.prod.r2_buckets がある"
 mutate 1 "(h) env 以外の表の奥に r2_buckets" 'cfg["observability"]["r2_buckets"] = [dict(cfg["r2_buckets"][0])]' \
   "observability.r2_buckets がある"
+# (i) 認可の tenant は空で置く
+mutate 1 "(i) FUEL_TENANT_ID に UUID を書く" \
+  'cfg["vars"]["FUEL_TENANT_ID"] = "-".join(["0" * 8, "0000", "4000", "8000", "0" * 8 + "abcd"])' "FUEL_TENANT_ID が空でない"
+mutate 1 "(i) FUEL_TENANT_ID を消す" 'del cfg["vars"]["FUEL_TENANT_ID"]' "FUEL_TENANT_ID が無い"
+mutate 1 "(i) vars 表を消す" 'del cfg["vars"]' "FUEL_TENANT_ID が無い"
 
 if bash scripts/check-exposure.sh "$tmp/none.toml" >/dev/null 2>&1; then
   echo "FAIL 存在しない toml: exit 0, want 非 0"; fail=1

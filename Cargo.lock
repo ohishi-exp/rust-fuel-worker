@@ -110,6 +110,8 @@ dependencies = [
 name = "fuel-logic"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "kintai-mysql",
  "serde_json",
 ]
 
@@ -117,9 +119,11 @@ dependencies = [
 name = "fuel-worker"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "fuel-logic",
  "futures-util",
  "kintai-mysql",
+ "serde_json",
  "vpc-mysql",
  "worker",
  "worker-sys",
