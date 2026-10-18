@@ -8,3 +8,6 @@ publish = false
 
 [dependencies]
 serde_json = "1"
+# 日時の値 (bind の Value::DateTime) と、SQL の名前付き引数の展開・結果セットの型 (worker と同じ rev)
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+kintai-mysql = { git = "https://github.com/ohishi-exp/rust-ichibanboshi", rev = "6d9f7de061f9208bfdb37611df2afdc101c0b41d" }
