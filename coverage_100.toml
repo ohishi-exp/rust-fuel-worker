@@ -1,0 +1,16 @@
+# 100% 行カバレッジの登録簿 (rust-ichibanboshi の scripts/check_coverage_100.sh と同じ書式)。
+#
+#   cargo llvm-cov --locked -p fuel-logic --text > cov.txt
+#   bash scripts/check_coverage_100.sh --config coverage_100.toml --use-cache cov.txt
+#
+# logic は native で動く純粋ロジック。worker crate (socket・応答) は wasm32 専用なので計測しない。
+# logic/src/lib.rs は mod 宣言だけなので登録しない。cargo-llvm-cov は計測対象のソースが 1 ファイルだと見出し行を出さず
+# gate が読めなくなるので、logic は 2 ファイル以上に分けておく。
+
+# 経路判定 (GET /api/fuel/health の 1 本。それ以外は 404 / 405)
+[[files]]
+path = "logic/src/route.rs"
+
+# 失敗の段・応答の写像・失敗ログの 1 行
+[[files]]
+path = "logic/src/reply.rs"

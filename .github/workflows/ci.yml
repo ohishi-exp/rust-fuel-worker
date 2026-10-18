@@ -1,0 +1,102 @@
+name: CI
+
+# fuel Worker (rust-fuel-worker) の検査 (rust-ichibanboshi の worker-kintai.yml の手順。Refs yhonda-ohishi/nginx#814)。
+# logic の test と 100% gate・wasm32 の build と clippy・fmt・worker-build・公開範囲の検査と陰性対照・wrangler deploy --dry-run。
+# この経路は secret も token も使わない。デプロイは deploy.yml (別 workflow。タグ v*)。
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # PR の古い run は捨てるが、main は途中で切らない
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # README と揃える
+  WRANGLER_VERSION: 4.144.0
+
+jobs:
+  fuel-worker:
+    name: logic test + Worker build + clippy + exposure + wrangler dry-run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          shared-key: fuel-worker
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Test (fuel-logic)
+        run: cargo test --locked -p fuel-logic
+
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      # 行カバレッジ 100% gate (登録簿 coverage_100.toml)。logic は経路判定・失敗の段・応答の写像なので全行を通す。
+      # worker crate (socket・応答) は wasm32 専用なので計測しない
+      - name: Coverage 100% gate (fuel-logic)
+        run: |
+          cov="$RUNNER_TEMP/fuel-cov.txt"
+          cargo llvm-cov --locked -p fuel-logic --text > "$cov"
+          bash scripts/check_coverage_100.sh --config coverage_100.toml --use-cache "$cov"
+
+      - name: Build (wasm32-unknown-unknown)
+        run: cargo build --locked -p fuel-worker --target wasm32-unknown-unknown
+
+      - name: Clippy (worker、wasm32-unknown-unknown)
+        run: cargo clippy --locked -p fuel-worker --target wasm32-unknown-unknown --all-targets -- -D warnings
+
+      - name: Clippy (logic、native)
+        run: cargo clippy --locked -p fuel-logic --all-targets -- -D warnings
+
+      - name: fmt
+        run: cargo fmt --all --check
+
+      # wrangler.toml の [build] command と同じ版
+      - run: cargo install -q worker-build@0.8.7 --locked
+
+      - name: worker-build --release
+        working-directory: worker
+        run: worker-build --release
+
+      - name: Exposure check
+        run: bash scripts/check-exposure.sh worker/wrangler.toml
+
+      - name: Exposure check (negative control)
+        run: bash scripts/check-exposure-test.sh worker/wrangler.toml
+
+      # secret も token も要らない (build と設定の検証だけ)
+      - name: wrangler deploy --dry-run
+        working-directory: worker
+        run: npx -y "wrangler@${WRANGLER_VERSION}" deploy --dry-run
+
+  # green の PR を merge する (ippoan/ci-workflows の reusable。merge は GitHub App の token で行う)。
+  # 別 org の reusable なので secrets: inherit は届かない — 明示して渡す
+  auto-merge:
+    name: Auto Merge
+    needs: [fuel-worker]
+    if: github.event_name == 'pull_request' && needs.fuel-worker.result == 'success'
+    uses: ippoan/ci-workflows/.github/workflows/auto-merge.yml@main
+    permissions:
+      contents: write
+      pull-requests: write
+      # 無いと startup_failure になる
+      checks: read
+    secrets:
+      CI_APP_ID: ${{ secrets.CI_APP_ID }}
+      CI_APP_PRIVATE_KEY: ${{ secrets.CI_APP_PRIVATE_KEY }}

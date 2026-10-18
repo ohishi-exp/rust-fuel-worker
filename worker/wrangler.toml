@@ -1,0 +1,44 @@
+# rust-fuel-worker: インタンク給油 (fuel_intank / fuel_cards) の Worker。CakePHP の /fuel-intank・/fuel-cards の移行先
+# (Refs yhonda-ohishi/nginx#814)。
+# Service Binding 専用。口は GET /api/fuel/health の 1 本 (社内 MariaDB に繋いで SELECT 1 を流す到達の確認用)。
+#
+# ★ 外から届く口を持たない:
+#   - fetch は Service Binding からだけ届く (route・workers.dev・preview なし)。
+#   - workers_dev = false / preview_urls = false、route / routes を書かない、env を作らない
+#   - MariaDB への口 (vpc_services)・資格情報 (secrets_store_secrets)・R2 (r2_buckets) はトップレベルにだけ置く。
+#     ローカルで迂回する LOCAL_* の var は持たない
+#   scripts/check-exposure.sh が CI で毎回これを検査する (陰性対照は scripts/check-exposure-test.sh)。
+# account_id は書かない (CLOUDFLARE_API_TOKEN から決まる)。
+# 本番へはタグ v* の push で deploy する (.github/workflows/deploy.yml)。
+name = "rust-fuel-worker"
+main = "build/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = false
+preview_urls = false
+
+[build]
+command = "worker-build --release"
+
+# Workers Logs (ログは段・失敗の種類・所要ミリ秒だけ)
+[observability]
+enabled = true
+
+# MariaDB への口 (tcp 3306)。勤怠 Worker (ichibanboshi-kintai) と同じ VPC Service を共用する。
+# 宛先の Tunnel・host:port は VPC Service 側に閉じる (コードの connect() の宛先は名目)。
+# service_id は VPC Service の id (資格情報でも宛先でもない)。
+[[vpc_services]]
+binding = "KINTAI_MARIADB_VPC"
+service_id = "01a12419-659c-7b21-ac68-945c6f23ccc8"
+remote = true
+
+# MariaDB の資格情報。store_id は Secrets Store の id、secret_name は secret 名 (どちらも値そのものではない)。
+# 中身は JSON (キー user/password/database。値は repo に書かない)。未投入なら GET /api/fuel/health は 503 (stage=secret)
+[[secrets_store_secrets]]
+binding = "FUEL_MARIADB"
+store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
+secret_name = "FUEL_MARIADB"
+
+# 給油 CSV の受け取り置き場 (CSV の取り込み = 後続 PR で使う)。バケットはこの PR では作らない。
+[[r2_buckets]]
+binding = "FUEL_INBOX"
+bucket_name = "fuel-inbox"
