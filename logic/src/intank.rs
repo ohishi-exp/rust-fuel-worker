@@ -716,11 +716,9 @@ mod tests {
             r#"{"dtako_row_id":"1234567890123456789012345"}"#,
             r#"{"dtako_row_id":12}"#,
         ] {
-            assert_eq!(
-                parse_patch(bad),
-                Err(ApiError::BadRequest("dtako_row_id")),
-                "{bad}"
-            );
+            // 失敗メッセージの引数を独立した行にしない (1.92 の llvm-cov が未通過の行に数える)
+            let got = parse_patch(bad);
+            assert_eq!(got, Err(ApiError::BadRequest("dtako_row_id")), "{bad}");
         }
         assert_eq!(
             parse_patch("{}"),
