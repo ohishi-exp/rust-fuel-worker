@@ -1,0 +1,10 @@
+# fuel (インタンク給油 fuel_intank / fuel_cards) の Rust Worker (Refs yhonda-ohishi/nginx#814)。
+# logic は native で cargo test できる純粋ロジック、worker は Workers VPC の TCP で社内 MariaDB に繋ぐ Worker (wasm32 専用)。
+[workspace]
+members = ["logic", "worker"]
+resolver = "2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1

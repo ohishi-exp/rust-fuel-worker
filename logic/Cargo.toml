@@ -1,0 +1,10 @@
+# fuel Worker の純粋ロジック (経路判定・失敗の段・応答の写像)。I/O を持たず native で cargo test できる。
+# workers/kintai の worker/src/probe.rs の形を fuel 用に縮めて写している。
+[package]
+name = "fuel-logic"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+serde_json = "1"
