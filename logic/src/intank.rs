@@ -36,11 +36,14 @@ pub const START_ROW_SQL: &str = "SELECT slip_num, datetime, fuel_card_id FROM fu
 
 /// start 行の伝票番号を親に持つ給油行(findWtSumFuelDtakoFuel)。列: `row_json` の 9 列、
 /// fuel_cards の id・car_id、その car の id・name、dtako_rows の id・車輌CC、その car の name、出庫日時・帰庫日時、
-/// 対象乗務員の id・name(計 20 列)。結合はどれも LEFT(CakePHP の belongsTo の既定)
+/// 対象乗務員の id・name、card の car の車輌CD(計 21 列)。結合はどれも LEFT(CakePHP の belongsTo の既定)。
+/// 車輌CD は dtako_cars(`車輌CC` = cars.id。CakePHP の DtakoCarsTable)の相関サブクエリで引く
+/// (1 車両に複数行あっても行が増えないよう JOIN にせず MIN で 1 つに)
 pub const BY_START_SQL: &str =
     "SELECT fi.datetime, fi.fuel_card_id, fi.slip_num, fi.slip_num_parent, \
      fi.quantity, fi.type, fi.detail, fi.dtako_row_id, fi.manual, fc.id, fc.car_id, c.id, c.name, \
-     dr.id, dr.`車輌CC`, drc.name, dr.`出庫日時`, dr.`帰庫日時`, d.id, d.name \
+     dr.id, dr.`車輌CC`, drc.name, dr.`出庫日時`, dr.`帰庫日時`, d.id, d.name, \
+     (SELECT MIN(dc.`車輌CD`) FROM dtako_cars dc WHERE dc.`車輌CC` = c.id) AS vehicle_cd \
      FROM fuel_intank fi \
      LEFT JOIN fuel_cards fc ON fc.id = fi.fuel_card_id \
      LEFT JOIN cars c ON c.id = fc.car_id \
@@ -208,7 +211,7 @@ fn object_or_null(present: bool, value: Json) -> Json {
     }
 }
 
-/// `BY_START_SQL` の 20 列を読む。
+/// `BY_START_SQL` の 21 列を読む。`car.vehicle_cd` は DB の値のまま文字列で(先頭ゼロを落とさない)。
 pub fn parse_fuel_rows(rs: &ResultSet) -> Result<Vec<FuelRow>, ApiError> {
     (0..rs.rows.len())
         .map(|i| {
@@ -218,7 +221,11 @@ pub fn parse_fuel_rows(rs: &ResultSet) -> Result<Vec<FuelRow>, ApiError> {
                 .ok_or(ApiError::Internal("fuel_datetime".into()))?;
             let mut body = row_json_at(rs, i, 0);
             let has_card = cell(9).is_some();
-            let car = json!({"id": text(cell(11)), "name": text(cell(12))});
+            let car = json!({
+                "id": text(cell(11)),
+                "name": text(cell(12)),
+                "vehicle_cd": text(cell(20)),
+            });
             body.insert("car".into(), object_or_null(cell(11).is_some(), car));
             let dtako_row = json!({
                 "id": text(cell(13)),
@@ -549,6 +556,10 @@ mod tests {
         let start = parse_start(&rs(&[&[Some("12"), Some(KEY_TEXT), Some("9999")]])).unwrap();
         let sql = by_start_sql(&start).unwrap();
         assert!(sql.contains("WHERE fi.slip_num_parent = '12' AND fi.type = 'fuel'"));
+        assert!(sql.contains(
+            "d.id, d.name, (SELECT MIN(dc.`車輌CD`) FROM dtako_cars dc \
+             WHERE dc.`車輌CC` = c.id) AS vehicle_cd FROM fuel_intank fi"
+        ));
     }
 
     fn joined<'a>(
@@ -574,6 +585,7 @@ mod tests {
             ]),
             None => r.extend([None; 7]),
         }
+        r.push(car_id.and(Some("0000003072")));
         r
     }
 
@@ -581,9 +593,12 @@ mod tests {
     fn by_start_flow() {
         let start = parse_start(&rs(&[&[Some("12"), Some(KEY_TEXT), Some("9999")]])).unwrap();
         let dtako = "24100105000000000307201";
+        // car はあるが dtako_cars に行が無い(vehicle_cd が NULL)
+        let mut no_cd = joined("2024-10-01 08:00:00", true, Some("307200"), None);
+        no_cd[20] = None;
         let rows_rs = rs(&[
             &joined("2024-10-01 07:00:00", true, Some("307200"), Some(dtako)),
-            &joined("2024-10-01 08:00:00", true, Some("307200"), None),
+            &no_cd,
             &joined("2024-10-01 09:00:00", true, Some("bad id"), Some("x")),
             &joined("2024-10-02 01:30:00", false, None, None),
         ]);
@@ -634,7 +649,10 @@ mod tests {
         );
         assert_eq!(out["end_time"], json!("2024-10-02 02:30:00"));
         let r0 = &out["rows"][0];
-        assert_eq!(r0["car"], json!({"id": "307200", "name": "長崎100か3072"}));
+        assert_eq!(
+            r0["car"],
+            json!({"id": "307200", "name": "長崎100か3072", "vehicle_cd": "0000003072"})
+        );
         assert_eq!(
             r0["dtako_row"],
             json!({
@@ -645,6 +663,12 @@ mod tests {
         );
         assert_eq!(r0["dtako_fuel_sum"], json!(120.5));
         assert_eq!(r0["dtako_fuel_array"], json!({"x": []}));
+        assert_eq!(
+            out["rows"][1]["car"],
+            json!({"id": "307200", "name": "長崎100か3072", "vehicle_cd": null})
+        );
+        let r2 = &out["rows"][2];
+        assert_eq!(r2["car"]["vehicle_cd"], json!("0000003072"));
         let r3 = &out["rows"][3];
         assert_eq!(
             (&r3["car"], &r3["dtako_row"], &r3["dtako_fuel_sum"]),
