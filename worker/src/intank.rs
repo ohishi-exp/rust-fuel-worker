@@ -50,6 +50,7 @@ async fn by_start(s: &mut Session, datetime: chrono::NaiveDateTime) -> Result<Re
     let start = parse_start(&query_rows(s, &start_row_sql(datetime)?).await?)?;
     let rows = parse_fuel_rows(&query_rows(s, &by_start_sql(&start)?).await?)?;
     // 同じ運行・同じ車輌の日は同じ SQL になるので 1 回だけ流す
+    // (給油の一覧は `{array, times}` の 1 つの Json で覚え、`by_start_json` が行ごとに分ける)
     let mut cache = HashMap::new();
     let mut results = Vec::with_capacity(rows.len());
     for up in follow_ups(&start, &rows)? {
