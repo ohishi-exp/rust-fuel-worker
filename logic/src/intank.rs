@@ -62,11 +62,15 @@ pub const SUM_SQL: &str = "SELECT SUM(quantity) FROM dtako_fuel \
      AND dtako_row_id IN (:dtako_row_id) \
      GROUP BY date_format(fuel_datetime, '%y%m%d') LIMIT 1";
 
-/// DtakoFuelTable::getFuelArray: その車輌の給油の日の自社・軽油の給油。列: dtako_row_id, fuel_datetime, quantity
-pub const FUEL_ARRAY_SQL: &str = "SELECT dtako_row_id, fuel_datetime, quantity FROM dtako_fuel \
-     WHERE sharyo_cc = :car_id AND fuel_kubun = 1 AND fuel_shubetsu = 1 AND fuel_bunrui = 1 \
-     AND fuel_datetime >= :day_start AND fuel_datetime < :day_end \
-     ORDER BY fuel_datetime ASC";
+/// DtakoFuelTable::getFuelArray: その車輌の給油の日の自社・軽油の給油と、その運行の出庫・帰庫の日時。
+/// 列: dtako_row_id, fuel_datetime, quantity, 出庫日時, 帰庫日時(dtako_rows は主キーで LEFT JOIN なので行は増えない)
+pub const FUEL_ARRAY_SQL: &str = "SELECT dtako_fuel.dtako_row_id, dtako_fuel.fuel_datetime, \
+     dtako_fuel.quantity, dr.`出庫日時`, dr.`帰庫日時` FROM dtako_fuel \
+     LEFT JOIN dtako_rows dr ON dr.id = dtako_fuel.dtako_row_id \
+     WHERE dtako_fuel.sharyo_cc = :car_id AND dtako_fuel.fuel_kubun = 1 \
+     AND dtako_fuel.fuel_shubetsu = 1 AND dtako_fuel.fuel_bunrui = 1 \
+     AND dtako_fuel.fuel_datetime >= :day_start AND dtako_fuel.fuel_datetime < :day_end \
+     ORDER BY dtako_fuel.fuel_datetime ASC";
 
 /// 主キーで 1 行。列は `row_json` の 9 列
 pub const ROW_SQL: &str = "SELECT datetime, fuel_card_id, slip_num, slip_num_parent, quantity, \
@@ -347,28 +351,35 @@ fn fuel_state(datetime: &str, quantity: &str) -> String {
     format!("{stamp}_{}", format_quantity(quantity))
 }
 
-/// `FUEL_ARRAY_SQL` の結果を dtako_row_id ごとの表示の配列にする(CakePHP の
-/// `combine("fuel_state", "fuel_state", "dtako_row_id")`。dtako_row_id が NULL の給油は `""` に、同じ表示は 1 つに)。
+/// `FUEL_ARRAY_SQL` の結果を `{"array": .., "times": ..}` にする。
+/// `array` は dtako_row_id ごとの表示の配列(CakePHP の `combine("fuel_state", "fuel_state", "dtako_row_id")`。
+/// dtako_row_id が NULL の給油は `""` に、同じ表示は 1 つに)。
+/// `times` は dtako_row_id ごとの `{departed_at, returned_at}`(dtako_rows の出庫・帰庫。無ければ null)。
+/// dtako_row_id が NULL の給油は `times` に入れない。
 pub fn array_json(rs: &ResultSet) -> Json {
     let mut groups: BTreeMap<String, Vec<Json>> = BTreeMap::new();
+    let mut times = Map::new();
     for i in 0..rs.rows.len() {
         let state = fuel_state(rs.text(i, 1).unwrap_or(""), rs.text(i, 2).unwrap_or(""));
-        let list = groups
-            .entry(rs.text(i, 0).unwrap_or("").to_string())
-            .or_default();
+        let id = rs.text(i, 0);
+        let list = groups.entry(id.unwrap_or("").to_string()).or_default();
         if !list.iter().any(|s| s == state.as_str()) {
             list.push(Json::String(state));
         }
+        if let Some(id) = id.filter(|id| !id.is_empty()) {
+            let t = json!({"departed_at": text(rs.text(i, 3)), "returned_at": text(rs.text(i, 4))});
+            times.insert(id.to_string(), t);
+        }
     }
-    Json::Object(
-        groups
-            .into_iter()
-            .map(|(k, v)| (k, Json::Array(v)))
-            .collect(),
-    )
+    let array = groups
+        .into_iter()
+        .map(|(k, v)| (k, Json::Array(v)))
+        .collect();
+    json!({"array": Json::Object(array), "times": Json::Object(times)})
 }
 
 /// `GET /api/fuel/intank?start=` の本文。`results` は `follow_ups` と同じ順の (合計, 給油の一覧)。
+/// 給油の一覧(`array_json` の値)は各行の `dtako_fuel_array` と `dtako_row_times` に分ける(無ければ両方 null)。
 pub fn by_start_json(
     start: Start,
     rows: Vec<FuelRow>,
@@ -381,7 +392,12 @@ pub fn by_start_json(
         .map(|(row, (sum, array))| {
             let mut body = row.body;
             body.insert("dtako_fuel_sum".into(), sum.unwrap_or(Json::Null));
-            body.insert("dtako_fuel_array".into(), array.unwrap_or(Json::Null));
+            let (array, times) = match array {
+                Some(mut v) => (v["array"].take(), v["times"].take()),
+                None => (Json::Null, Json::Null),
+            };
+            body.insert("dtako_fuel_array".into(), array);
+            body.insert("dtako_row_times".into(), times);
             Json::Object(body)
         })
         .collect();
@@ -614,11 +630,17 @@ mod tests {
              AND dtako_row_id IN ('24100105000000000307201') \
              GROUP BY date_format(fuel_datetime, '%y%m%d') LIMIT 1"
         );
-        assert!(ups[0]
-            .array
-            .as_deref()
-            .unwrap()
-            .contains("WHERE sharyo_cc = '307200' AND"));
+        assert_eq!(
+            ups[0].array.as_deref().unwrap(),
+            "SELECT dtako_fuel.dtako_row_id, dtako_fuel.fuel_datetime, \
+             dtako_fuel.quantity, dr.`出庫日時`, dr.`帰庫日時` FROM dtako_fuel \
+             LEFT JOIN dtako_rows dr ON dr.id = dtako_fuel.dtako_row_id \
+             WHERE dtako_fuel.sharyo_cc = '307200' AND dtako_fuel.fuel_kubun = 1 \
+             AND dtako_fuel.fuel_shubetsu = 1 AND dtako_fuel.fuel_bunrui = 1 \
+             AND dtako_fuel.fuel_datetime >= '2024-10-01 00:00:00' \
+             AND dtako_fuel.fuel_datetime < '2024-10-02 00:00:00' \
+             ORDER BY dtako_fuel.fuel_datetime ASC"
+        );
         assert_eq!(ups[1].sum, None);
         assert!(ups[1].array.is_some());
         assert_eq!(
@@ -636,9 +658,13 @@ mod tests {
             }
         );
 
+        let times = json!({"x": {"departed_at": "2024-10-01 05:00:00", "returned_at": null}});
         let results = vec![
-            (Some(json!(120.5)), Some(json!({"x": []}))),
-            (None, Some(json!({}))),
+            (
+                Some(json!(120.5)),
+                Some(json!({"array": {"x": []}, "times": times})),
+            ),
+            (None, Some(json!({"array": {}, "times": {}}))),
             (None, None),
             (None, None),
         ];
@@ -663,6 +689,14 @@ mod tests {
         );
         assert_eq!(r0["dtako_fuel_sum"], json!(120.5));
         assert_eq!(r0["dtako_fuel_array"], json!({"x": []}));
+        assert_eq!(r0["dtako_row_times"], times);
+        assert_eq!(
+            (
+                &out["rows"][1]["dtako_fuel_array"],
+                &out["rows"][1]["dtako_row_times"]
+            ),
+            (&json!({}), &json!({}))
+        );
         assert_eq!(
             out["rows"][1]["car"],
             json!({"id": "307200", "name": "長崎100か3072", "vehicle_cd": null})
@@ -673,6 +707,10 @@ mod tests {
         assert_eq!(
             (&r3["car"], &r3["dtako_row"], &r3["dtako_fuel_sum"]),
             (&Json::Null, &Json::Null, &Json::Null)
+        );
+        assert_eq!(
+            (&r3["dtako_fuel_array"], &r3["dtako_row_times"]),
+            (&Json::Null, &Json::Null)
         );
     }
 
@@ -694,21 +732,50 @@ mod tests {
     fn sums_and_arrays() {
         assert_eq!(sum_json(&rs(&[&[Some("120.50")]])), json!(120.5));
         assert_eq!(sum_json(&rs(&[])), Json::Null);
+        let (dep, ret) = (Some("2024-10-01 05:00:00"), Some("2024-10-01 18:00:00"));
         let a = array_json(&rs(&[
-            &[Some("A"), Some("2024-10-01 07:05:09"), Some("1234.5")],
-            &[Some("A"), Some("2024-10-01 07:05:09"), Some("1234.5")],
-            &[Some("A"), Some("2024-10-01 08:00:00"), Some("20")],
-            &[None, Some("2024-10-01 09:00:00"), Some("-1.2346")],
-            &[Some("B"), None, Some("x")],
+            &[
+                Some("A"),
+                Some("2024-10-01 07:05:09"),
+                Some("1234.5"),
+                dep,
+                ret,
+            ],
+            &[
+                Some("A"),
+                Some("2024-10-01 07:05:09"),
+                Some("1234.5"),
+                dep,
+                ret,
+            ],
+            &[Some("A"), Some("2024-10-01 08:00:00"), Some("20"), dep, ret],
+            // 運行なし(dtako_row_id が NULL / 空)は times に入れない
+            &[
+                None,
+                Some("2024-10-01 09:00:00"),
+                Some("-1.2346"),
+                None,
+                None,
+            ],
+            &[Some(""), Some("2024-10-01 09:30:00"), Some("1"), None, None],
+            // 出庫が NULL(または dtako_rows に行が無い)
+            &[Some("B"), None, Some("x"), None, ret],
         ]));
         assert_eq!(
             a,
             json!({
-                "": ["202410010900_-1.235"],
-                "A": ["202410010705_1,234.50", "202410010800_20.00"],
-                "B": ["_x"],
+                "array": {
+                    "": ["202410010900_-1.235", "202410010930_1.00"],
+                    "A": ["202410010705_1,234.50", "202410010800_20.00"],
+                    "B": ["_x"],
+                },
+                "times": {
+                    "A": {"departed_at": dep, "returned_at": ret},
+                    "B": {"departed_at": null, "returned_at": ret},
+                },
             })
         );
+        assert_eq!(array_json(&rs(&[])), json!({"array": {}, "times": {}}));
         assert_eq!(format_quantity("1234567.891"), "1,234,567.891");
         assert_eq!(format_quantity("0"), "0.00");
     }

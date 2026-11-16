@@ -22,6 +22,7 @@ Service Binding 専用 (route・workers.dev・preview なし)。
   エラーの文言・宛先・ユーザー名は応答にもログにも出さない (段と種別だけ)
 - `/api/fuel/*` のそれ以外 — header `X-Tenant-ID` が var `FUEL_TENANT_ID` と一致するときだけ通す参照・編集と、UTRAN.CSV の取り込み (`POST /api/fuel/uploads`)
   - `GET /api/fuel/intank?start=<datetime>` (start 行との突き合わせ表) の各行の `car` は `{id, name, vehicle_cd}`。`vehicle_cd` は `dtako_cars.車輌CD` (`車輌CC` = cars.id) を DB の値のまま文字列で返す (先頭ゼロを落とさない)。dtako_cars に行が無ければ null。query 無しの最新 100 行には `car` が無い
+  - 同じ突き合わせ表の各行の `dtako_row_times` は、その行の `dtako_fuel_array` に並ぶ運行ごとの出庫・帰庫日時 `{"<dtako_row_id>": {departed_at, returned_at}}` (書式は `dtako_row.departed_at / returned_at` と同じ。dtako_rows の値が無ければ null、運行なし (dtako_row_id が空) の給油は入れない)。`dtako_fuel_array` が null の行は null
 - `POST /machine/fuel-utran/uploads` — USB 常駐アプリからの UTRAN.CSV (下の「USB アップロード」)
 - それ以外の path は 404 (method 違いは 405)
 
