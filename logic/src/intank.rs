@@ -557,20 +557,17 @@ mod tests {
     #[test]
     fn dtako_fuel_by_row() {
         let sql = dtako_fuel_by_row_sql(Some("dtako_row_id=26111621255500000037281")).unwrap();
-        assert!(
-            sql.contains("dtako_row_id = '26111621255500000037281'"),
-            "{sql}"
-        );
+        assert!(sql.contains("dtako_row_id = '26111621255500000037281'"));
         for q in [
             None,
             Some("x=1"),
             Some("dtako_row_id=12a"),
             Some("dtako_row_id=%ZZ"),
         ] {
-            assert!(
-                matches!(dtako_fuel_by_row_sql(q), Err(ApiError::BadRequest(_))),
-                "{q:?}"
-            );
+            assert!(matches!(
+                dtako_fuel_by_row_sql(q),
+                Err(ApiError::BadRequest(_))
+            ));
         }
         let mut set = rs(&[
             &[Some("2026-11-21 20:24:50"), None],
