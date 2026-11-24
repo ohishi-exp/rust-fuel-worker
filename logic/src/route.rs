@@ -9,6 +9,7 @@
 //! | `/api/fuel/intank/{datetime};{fuel_card_id}` | PATCH・DELETE |
 //! | `/api/fuel/intank/{datetime};{fuel_card_id}/recheck` | POST (dtako_row_id の照合し直し。`crate::manual`) |
 //! | `/api/fuel/manual-candidates` | GET (手入力の伝票番号の候補。`crate::manual`) |
+//! | `/api/fuel/dtako-fuel` | GET (`?dtako_row_id=` の運行の dtako_fuel を全列。調べもの用の読むだけの口) |
 //! | `/api/fuel/unregistered-cards` | GET |
 //! | `/api/fuel/cars` | GET |
 //! | `/api/fuel/cards` | GET・POST |
@@ -50,6 +51,8 @@ pub enum Route {
     IntankRecheck(IntankKey),
     /// `GET /api/fuel/manual-candidates`
     ManualCandidates,
+    /// `GET /api/fuel/dtako-fuel?dtako_row_id=`
+    DtakoFuel,
     UnregisteredCards,
     Cars,
     CardsList,
@@ -129,6 +132,7 @@ pub fn route(method: &str, path: &str) -> Route {
             _ => Route::MethodNotAllowed,
         },
         ["manual-candidates"] => only(method, "GET", Route::ManualCandidates),
+        ["dtako-fuel"] => only(method, "GET", Route::DtakoFuel),
         ["unregistered-cards"] => only(method, "GET", Route::UnregisteredCards),
         ["cars"] => only(method, "GET", Route::Cars),
         ["cards"] => match method {
@@ -186,6 +190,7 @@ mod tests {
             ("/api/fuel/starts", Route::Starts),
             ("/api/fuel/unregistered-cards", Route::UnregisteredCards),
             ("/api/fuel/manual-candidates", Route::ManualCandidates),
+            ("/api/fuel/dtako-fuel", Route::DtakoFuel),
             ("/api/fuel/cars", Route::Cars),
         ] {
             assert_eq!(route("GET", path), want);
