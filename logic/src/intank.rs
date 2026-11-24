@@ -38,6 +38,7 @@ pub const START_ROW_SQL: &str = "SELECT slip_num, datetime, fuel_card_id FROM fu
 /// fuel_cards の id・car_id、その car の id・name、dtako_rows の id・車輌CC、その car の name、出庫日時・帰庫日時、
 /// 対象乗務員の id・name、card の car の車輌CD(計 21 列)。結合はどれも LEFT(CakePHP の belongsTo の既定)。
 /// 車輌CD は dtako_cars(`車輌CC` = cars.id。CakePHP の DtakoCarsTable)の相関サブクエリで引く
+/// 伝票番号は一周して使い回されるので、start 行の日時より前の行は入れない(去年の同じ番号の行が混ざる。CakePHP から変えた)
 /// (1 車両に複数行あっても行が増えないよう JOIN にせず MIN で 1 つに)
 pub const BY_START_SQL: &str =
     "SELECT fi.datetime, fi.fuel_card_id, fi.slip_num, fi.slip_num_parent, \
@@ -50,7 +51,8 @@ pub const BY_START_SQL: &str =
      LEFT JOIN dtako_rows dr ON dr.id = fi.dtako_row_id \
      LEFT JOIN cars drc ON drc.id = dr.`車輌CC` \
      LEFT JOIN drivers d ON d.id = dr.`対象乗務員CD` \
-     WHERE fi.slip_num_parent = :slip_num AND fi.type = 'fuel' AND fi.fuel_card_id <> 9999 \
+     WHERE fi.slip_num_parent = :slip_num AND fi.datetime >= :start_datetime \
+     AND fi.type = 'fuel' AND fi.fuel_card_id <> 9999 \
      ORDER BY fi.datetime ASC";
 
 /// DtakoFuelTable::getSum: 給油の日の 0 時〜翌 0 時、かつ start 行の時刻〜最後の行 +1 時間の、その運行の
@@ -194,7 +196,13 @@ pub fn parse_start(rs: &ResultSet) -> Result<Start, ApiError> {
 }
 
 pub fn by_start_sql(start: &Start) -> Result<String, ApiError> {
-    bind(BY_START_SQL, &[("slip_num", Value::Digits(start.slip_num))])
+    bind(
+        BY_START_SQL,
+        &[
+            ("slip_num", Value::Digits(start.slip_num)),
+            ("start_datetime", Value::DateTime(start.datetime)),
+        ],
+    )
 }
 
 /// 給油行 1 行(JSON の本体と、後の集計に要る値)。
@@ -493,7 +501,7 @@ mod tests {
             (STARTS_SQL, &[]),
             (LATEST_SQL, &[]),
             (START_ROW_SQL, &["datetime"]),
-            (BY_START_SQL, &["slip_num"]),
+            (BY_START_SQL, &["slip_num", "start_datetime"]),
             (
                 SUM_SQL,
                 &[
@@ -571,7 +579,10 @@ mod tests {
         );
         let start = parse_start(&rs(&[&[Some("12"), Some(KEY_TEXT), Some("9999")]])).unwrap();
         let sql = by_start_sql(&start).unwrap();
-        assert!(sql.contains("WHERE fi.slip_num_parent = '12' AND fi.type = 'fuel'"));
+        assert!(sql.contains(
+            "WHERE fi.slip_num_parent = '12' AND fi.datetime >= '2024-10-01 06:58:00' \
+             AND fi.type = 'fuel'"
+        ));
         assert!(sql.contains(
             "d.id, d.name, (SELECT MIN(dc.`車輌CD`) FROM dtako_cars dc \
              WHERE dc.`車輌CC` = c.id) AS vehicle_cd FROM fuel_intank fi"
