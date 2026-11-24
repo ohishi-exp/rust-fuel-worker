@@ -111,6 +111,12 @@ pub fn raw_rows_json(rs: &ResultSet) -> Map<String, Json> {
     body
 }
 
+/// 運行に紐づいていない給油行について、その車両の運行 (dtako_rows) のうち給油の後に終わった (帰庫した) ものの数。
+/// 0 なら dtako のデータがまだ届いていない、1 以上なら届いているのに紐づいていない。運転手は見ない (紐づかないことがある)。
+/// 列: count
+pub const ROWS_AFTER_SQL: &str = "SELECT COUNT(*) FROM dtako_rows \
+     WHERE `車輌CC` = :car_id AND `帰庫日時` > :datetime";
+
 /// 主キーで 1 行。列は `row_json` の 9 列
 pub const ROW_SQL: &str = "SELECT datetime, fuel_card_id, slip_num, slip_num_parent, quantity, \
      type, detail, dtako_row_id, manual FROM fuel_intank \
@@ -317,10 +323,12 @@ fn day_range(dt: NaiveDateTime) -> (Value, Value) {
 /// 1 行ぶんの追加のクエリ。fuel_card が無い行は両方 `None`(CakePHP も集計しない)。
 /// dtako_row_id が無い(数字でない)行の合計は `None`(`IN (NULL)` は 1 行も当たらないので結果は同じ null)。
 /// card の car_id が英数字・`-`・`_` でなければ給油の一覧も `None`。
+/// `after`(`ROWS_AFTER_SQL`)は運行に紐づいていない (dtako_row_id が無い) 行で、car_id が読めるときだけ。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FollowUp {
     pub sum: Option<String>,
     pub array: Option<String>,
+    pub after: Option<String>,
 }
 
 pub fn follow_ups(start: &Start, rows: &[FuelRow]) -> Result<Vec<FollowUp>, ApiError> {
@@ -333,6 +341,7 @@ pub fn follow_ups(start: &Start, rows: &[FuelRow]) -> Result<Vec<FollowUp>, ApiE
                 return Ok(FollowUp {
                     sum: None,
                     array: None,
+                    after: None,
                 });
             }
             let (day_start, day_end) = day_range(row.datetime);
@@ -352,12 +361,25 @@ pub fn follow_ups(start: &Start, rows: &[FuelRow]) -> Result<Vec<FollowUp>, ApiE
                     ("day_end", day_end),
                 ]
             });
+            let car = row.car_id.as_deref().and_then(Token::new);
+            let after_params = car.filter(|_| row.dtako_row_id.is_none()).map(|car| {
+                [
+                    ("car_id", Value::Token(car)),
+                    ("datetime", Value::DateTime(row.datetime)),
+                ]
+            });
             Ok(FollowUp {
                 sum: sum_params.map(|p| bind(SUM_SQL, &p)).transpose()?,
                 array: array_params.map(|p| bind(FUEL_ARRAY_SQL, &p)).transpose()?,
+                after: after_params.map(|p| bind(ROWS_AFTER_SQL, &p)).transpose()?,
             })
         })
         .collect()
+}
+
+/// `ROWS_AFTER_SQL` の結果 (件数)。
+pub fn count_json(rs: &ResultSet) -> Json {
+    num(rs.text(0, 0))
 }
 
 /// `SUM_SQL` の結果(行が無ければ null)。
@@ -428,15 +450,16 @@ pub fn array_json(rs: &ResultSet) -> Json {
 pub fn by_start_json(
     start: Start,
     rows: Vec<FuelRow>,
-    results: Vec<(Option<Json>, Option<Json>)>,
+    results: Vec<(Option<Json>, Option<Json>, Option<Json>)>,
 ) -> Map<String, Json> {
     let end = end_time(&rows).map_or(Json::Null, |e| Json::String(crate::api::format_datetime(e)));
     let out = rows
         .into_iter()
         .zip(results)
-        .map(|(row, (sum, array))| {
+        .map(|(row, (sum, array, after))| {
             let mut body = row.body;
             body.insert("dtako_fuel_sum".into(), sum.unwrap_or(Json::Null));
+            body.insert("dtako_rows_after".into(), after.unwrap_or(Json::Null));
             let (array, times) = match array {
                 Some(mut v) => (v["array"].take(), v["times"].take()),
                 None => (Json::Null, Json::Null),
@@ -534,7 +557,8 @@ mod tests {
 
     #[test]
     fn sql_constants_have_expected_names() {
-        let cases: [(&str, &[&str]); 12] = [
+        let cases: [(&str, &[&str]); 13] = [
+            (ROWS_AFTER_SQL, &["car_id", "datetime"]),
             (DTAKO_FUEL_BY_ROW_SQL, &["dtako_row_id"]),
             (STARTS_SQL, &[]),
             (LATEST_SQL, &[]),
@@ -721,20 +745,28 @@ mod tests {
              AND dtako_fuel.fuel_datetime < '2024-10-02 00:00:00' \
              ORDER BY dtako_fuel.fuel_datetime ASC"
         );
+        assert_eq!(ups[0].after, None);
         assert_eq!(ups[1].sum, None);
         assert!(ups[1].array.is_some());
+        assert_eq!(
+            ups[1].after.as_deref().unwrap(),
+            "SELECT COUNT(*) FROM dtako_rows \
+             WHERE `車輌CC` = '307200' AND `帰庫日時` > '2024-10-01 08:00:00'"
+        );
         assert_eq!(
             ups[2],
             FollowUp {
                 sum: None,
-                array: None
+                array: None,
+                after: None
             }
         );
         assert_eq!(
             ups[3],
             FollowUp {
                 sum: None,
-                array: None
+                array: None,
+                after: None
             }
         );
 
@@ -743,10 +775,15 @@ mod tests {
             (
                 Some(json!(120.5)),
                 Some(json!({"array": {"x": []}, "times": times})),
+                None,
             ),
-            (None, Some(json!({"array": {}, "times": {}}))),
-            (None, None),
-            (None, None),
+            (
+                None,
+                Some(json!({"array": {}, "times": {}})),
+                Some(json!(2)),
+            ),
+            (None, None, None),
+            (None, None, None),
         ];
         let out = Json::Object(by_start_json(start, rows, results));
         assert_eq!(
@@ -768,6 +805,8 @@ mod tests {
             })
         );
         assert_eq!(r0["dtako_fuel_sum"], json!(120.5));
+        assert_eq!(r0["dtako_rows_after"], Json::Null);
+        assert_eq!(out["rows"][1]["dtako_rows_after"], json!(2));
         assert_eq!(r0["dtako_fuel_array"], json!({"x": []}));
         assert_eq!(r0["dtako_row_times"], times);
         assert_eq!(
@@ -812,6 +851,7 @@ mod tests {
     fn sums_and_arrays() {
         assert_eq!(sum_json(&rs(&[&[Some("120.50")]])), json!(120.5));
         assert_eq!(sum_json(&rs(&[])), Json::Null);
+        assert_eq!(count_json(&rs(&[&[Some("3")]])), json!(3));
         let (dep, ret) = (Some("2024-10-01 05:00:00"), Some("2024-10-01 18:00:00"));
         let a = array_json(&rs(&[
             &[

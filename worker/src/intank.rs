@@ -8,9 +8,10 @@ use std::collections::HashMap;
 use fuel_logic::access::Access;
 use fuel_logic::api::{ok, parse_datetime, query_param, require_row, with_status, ApiError};
 use fuel_logic::intank::{
-    array_json, by_start_json, by_start_sql, check_deletable, delete_sql, dtako_fuel_by_row_sql,
-    follow_ups, item_json, list_json, parse_fuel_rows, parse_patch, parse_start, patch_sql,
-    raw_rows_json, row_sql, start_row_sql, starts_json, sum_json, LATEST_SQL, STARTS_SQL,
+    array_json, by_start_json, by_start_sql, check_deletable, count_json, delete_sql,
+    dtako_fuel_by_row_sql, follow_ups, item_json, list_json, parse_fuel_rows, parse_patch,
+    parse_start, patch_sql, raw_rows_json, row_sql, start_row_sql, starts_json, sum_json,
+    LATEST_SQL, STARTS_SQL,
 };
 use fuel_logic::manual::{
     candidates_json, candidates_sql, decide_recheck, decide_write, parse_create, recheck_sql,
@@ -65,7 +66,8 @@ async fn by_start(s: &mut Session, datetime: chrono::NaiveDateTime) -> Result<Re
     for up in follow_ups(&start, &rows)? {
         let sum = cached(s, &mut cache, up.sum, sum_json).await?;
         let array = cached(s, &mut cache, up.array, array_json).await?;
-        results.push((sum, array));
+        let after = cached(s, &mut cache, up.after, count_json).await?;
+        results.push((sum, array, after));
     }
     Ok(ok(by_start_json(start, rows, results)))
 }
