@@ -6,7 +6,7 @@
 //! - それ以外の `/api/fuel/*`: header `X-Tenant-ID` が var `FUEL_TENANT_ID` と一致することを求める
 //!   (`fuel_logic::auth`)。参照(starts・intank・unregistered-cards・cars・cards)と編集(cards の追加・変更・削除、
 //!   給油行の dtako_row_id の付け替えと手入力の行の削除・手入力の追加・recheck)、手入力の伝票番号の候補
-//!   (manual-candidates)、UTRAN.CSV の取り込み (`inbox`。uploads)
+//!   (manual-candidates)、運行ごとの dtako_fuel の全列 (dtako-fuel。調べもの用の読むだけの口)、UTRAN.CSV の取り込み (`inbox`。uploads)
 //! - `POST /machine/fuel-utran/uploads`: USB 常駐アプリからの UTRAN.CSV (auth-worker の machine-relay が中継)。
 //!   X-Tenant-ID ではなく共有 secret `X-Internal-Shared-Secret` と auth-worker の RPC `issueTicket` で通す (`machine`)
 //! - それ以外の path は 404。1 リクエスト 1 接続(`db`)
@@ -105,6 +105,7 @@ fn route_name(route: Route) -> &'static str {
         | Route::IntankDelete(_)
         | Route::IntankRecheck(_) => "intank",
         Route::ManualCandidates => "manual-candidates",
+        Route::DtakoFuel => "dtako-fuel",
         Route::UnregisteredCards => "unregistered-cards",
         Route::Cars => "cars",
         _ => "cards",
@@ -132,6 +133,7 @@ async fn api(env: &Env, route: Route, query: Option<&str>, body: &str) -> Result
         Route::IntankCreate => intank::create(env, body).await,
         Route::IntankRecheck(key) => intank::recheck(env, key).await,
         Route::ManualCandidates => intank::manual_candidates(env).await,
+        Route::DtakoFuel => intank::dtako_fuel(env, query).await,
         Route::UnregisteredCards => cards::unregistered(env).await,
         Route::Cars => cards::cars(env).await,
         Route::CardsList => cards::list(env).await,

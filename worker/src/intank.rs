@@ -8,9 +8,9 @@ use std::collections::HashMap;
 use fuel_logic::access::Access;
 use fuel_logic::api::{ok, parse_datetime, query_param, require_row, with_status, ApiError};
 use fuel_logic::intank::{
-    array_json, by_start_json, by_start_sql, check_deletable, delete_sql, follow_ups, item_json,
-    list_json, parse_fuel_rows, parse_patch, parse_start, patch_sql, row_sql, start_row_sql,
-    starts_json, sum_json, LATEST_SQL, STARTS_SQL,
+    array_json, by_start_json, by_start_sql, check_deletable, delete_sql, dtako_fuel_by_row_sql,
+    follow_ups, item_json, list_json, parse_fuel_rows, parse_patch, parse_start, patch_sql,
+    raw_rows_json, row_sql, start_row_sql, starts_json, sum_json, LATEST_SQL, STARTS_SQL,
 };
 use fuel_logic::manual::{
     candidates_json, candidates_sql, decide_recheck, decide_write, parse_create, recheck_sql,
@@ -29,6 +29,15 @@ use crate::with_session;
 pub async fn starts(env: &Env) -> Result<Reply, ApiError> {
     with_session(env, Access::Read, async |s| {
         Ok(ok(starts_json(&query_rows(s, STARTS_SQL).await?)))
+    })
+    .await
+}
+
+/// `?dtako_row_id=` の運行の dtako_fuel を全列そのまま(読むだけ)。
+pub async fn dtako_fuel(env: &Env, query: Option<&str>) -> Result<Reply, ApiError> {
+    let sql = dtako_fuel_by_row_sql(query)?;
+    with_session(env, Access::Read, async |s| {
+        Ok(ok(raw_rows_json(&query_rows(s, &sql).await?)))
     })
     .await
 }

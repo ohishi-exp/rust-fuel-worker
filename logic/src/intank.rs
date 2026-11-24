@@ -16,7 +16,9 @@ use kintai_mysql::bind::{Digits, Token, Value};
 use kintai_mysql::response::ResultSet;
 use serde_json::{json, Map, Value as Json};
 
-use crate::api::{bind, flag, num, parse_datetime, parse_object, require_row, text, ApiError};
+use crate::api::{
+    bind, flag, num, parse_datetime, parse_object, query_param, require_row, text, ApiError,
+};
 use crate::route::IntankKey;
 
 /// start 行の fuel_card_id(CSV の Z 行。CakePHP の beforeMarshal が 9999 を入れる)。
@@ -71,6 +73,41 @@ pub const FUEL_ARRAY_SQL: &str = "SELECT dtako_fuel.dtako_row_id, dtako_fuel.fue
      AND dtako_fuel.fuel_shubetsu = 1 AND dtako_fuel.fuel_bunrui = 1 \
      AND dtako_fuel.fuel_datetime >= :day_start AND dtako_fuel.fuel_datetime < :day_end \
      ORDER BY dtako_fuel.fuel_datetime ASC";
+
+/// `GET /api/fuel/dtako-fuel?dtako_row_id=`: その運行の dtako_fuel を全列そのまま(調べもの用。D数量の二重計上の確認など)。
+/// 区分で絞らない(`SUM_SQL` が数えない行も見えるように)
+pub const DTAKO_FUEL_BY_ROW_SQL: &str = "SELECT * FROM dtako_fuel \
+     WHERE dtako_row_id = :dtako_row_id ORDER BY fuel_datetime ASC";
+
+/// `?dtako_row_id=` (数字だけ) から `DTAKO_FUEL_BY_ROW_SQL` を組む。無い・数字でなければ 400。
+pub fn dtako_fuel_by_row_sql(query: Option<&str>) -> Result<String, ApiError> {
+    let id = query_param(query, "dtako_row_id")?
+        .as_deref()
+        .and_then(Digits::new)
+        .ok_or(ApiError::BadRequest("dtako_row_id"))?;
+    bind(
+        DTAKO_FUEL_BY_ROW_SQL,
+        &[("dtako_row_id", Value::Digits(id))],
+    )
+}
+
+/// 結果セットを列名つきの object の配列に(値は文字列のまま。NULL は null)。`{rows: [{列名: 値}]}`
+pub fn raw_rows_json(rs: &ResultSet) -> Map<String, Json> {
+    let rows = (0..rs.rows.len())
+        .map(|i| {
+            let row: Map<String, Json> = rs
+                .columns
+                .iter()
+                .enumerate()
+                .map(|(c, col)| (col.name.clone(), text(rs.text(i, c))))
+                .collect();
+            Json::Object(row)
+        })
+        .collect();
+    let mut body = Map::new();
+    body.insert("rows".into(), Json::Array(rows));
+    body
+}
 
 /// 主キーで 1 行。列は `row_json` の 9 列
 pub const ROW_SQL: &str = "SELECT datetime, fuel_card_id, slip_num, slip_num_parent, quantity, \
@@ -489,7 +526,8 @@ mod tests {
 
     #[test]
     fn sql_constants_have_expected_names() {
-        let cases: [(&str, &[&str]); 11] = [
+        let cases: [(&str, &[&str]); 12] = [
+            (DTAKO_FUEL_BY_ROW_SQL, &["dtako_row_id"]),
             (STARTS_SQL, &[]),
             (LATEST_SQL, &[]),
             (START_ROW_SQL, &["datetime"]),
@@ -514,6 +552,40 @@ mod tests {
         for (sql, want) in cases {
             assert_eq!(names(sql).unwrap(), want.to_vec(), "{sql}");
         }
+    }
+
+    #[test]
+    fn dtako_fuel_by_row() {
+        let sql = dtako_fuel_by_row_sql(Some("dtako_row_id=26111621255500000037281")).unwrap();
+        assert!(
+            sql.contains("dtako_row_id = '26111621255500000037281'"),
+            "{sql}"
+        );
+        for q in [
+            None,
+            Some("x=1"),
+            Some("dtako_row_id=12a"),
+            Some("dtako_row_id=%ZZ"),
+        ] {
+            assert!(
+                matches!(dtako_fuel_by_row_sql(q), Err(ApiError::BadRequest(_))),
+                "{q:?}"
+            );
+        }
+        let mut set = rs(&[
+            &[Some("2026-11-21 20:24:50"), None],
+            &[Some("2026-11-21 20:24:50"), Some("3728")],
+        ]);
+        set.columns[0].name = "fuel_datetime".into();
+        set.columns[1].name = "sharyo_cc".into();
+        assert_eq!(
+            Json::Object(raw_rows_json(&set)),
+            json!({"rows": [
+                {"fuel_datetime": "2026-11-21 20:24:50", "sharyo_cc": null},
+                {"fuel_datetime": "2026-11-21 20:24:50", "sharyo_cc": "3728"},
+            ]})
+        );
+        assert_eq!(Json::Object(raw_rows_json(&rs(&[]))), json!({"rows": []}));
     }
 
     #[test]
